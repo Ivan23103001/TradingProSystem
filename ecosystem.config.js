@@ -7,8 +7,7 @@ module.exports = {
       cwd: "./",
       interpreter: "none",
       env: {
-        PYTHONPATH: ".",
-        ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
+        PYTHONPATH: "."
       }
     },
     {

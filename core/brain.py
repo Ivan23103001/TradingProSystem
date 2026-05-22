@@ -112,13 +112,12 @@ class TradingBrain:
     @staticmethod
     def initialize():
         """Inicializa el entorno, carga variables y valida la integridad del sistema."""
+        load_dotenv()
         env_mode = os.environ.get("TRADING_ENV", "dev").lower()
         if env_mode == "prod":
             load_dotenv(".env.prod")
         elif env_mode == "dev":
             load_dotenv(".env.dev")
-        else:
-            load_dotenv()
             
         TradingBrain.check_integrity()
         # Iniciar logger centralizado si es necesario

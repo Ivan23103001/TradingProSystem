@@ -1,131 +1,192 @@
 import pandas as pd
 import numpy as np
+from datetime import datetime
+import pytz
 
-def run_simulation(df, initial_capital=100000.0, position_sizing=1.0, stop_loss=0.05, take_profit=0.15):
-    """
-    Simulador Avanzado con Métricas de Rendimiento.
-    Calcula Ganancias, Win Rate (Eficiencia) y Max Drawdown (Riesgo).
-    """
+def is_market_open():
+    try:
+        et = pytz.timezone('US/Eastern')
+        now = datetime.now(et)
+        if now.weekday() >= 5: return False, "Mercado cerrado (Fin de semana)"
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        if now < market_open: return False, f"Mercado abre a las {market_open.strftime('%I:%M %p')}"
+        elif now > market_close: return False, "Mercado cerrado"
+        else: return True, "Mercado ABIERTO"
+    except: return True, "Habilitado"
+
+def check_critical_hours(dt_now):
+    try:
+        start_safe = dt_now.replace(hour=9, minute=45, second=0, microsecond=0)
+        end_safe = dt_now.replace(hour=15, minute=45, second=0, microsecond=0)
+        
+        # Filtro de apertura y cierre
+        if dt_now < start_safe or dt_now > end_safe: 
+            return False, "Fase Crítica (Apertura/Cierre)"
+            
+        # Filtro de Almuerzo ("Lunch Chop") donde el volumen institucional cae y el precio se vuelve ruidoso
+        lunch_start = dt_now.replace(hour=12, minute=0, second=0, microsecond=0)
+        lunch_end = dt_now.replace(hour=13, minute=30, second=0, microsecond=0)
+        if lunch_start <= dt_now <= lunch_end:
+            return False, "Fase Crítica (Rango de Almuerzo / Efecto Choppy)"
+            
+        return True, "Horario Seguro"
+    except: return True, "Horario habilitado"
+
+def run_simulation(df, initial_capital=100000.0, position_sizing=1.0, 
+                   stop_loss=0.05, take_profit=0.15,
+                   use_trailing_stop=True, use_atr_stop=True,
+                   confirmation_bars=2, cooldown_days=5,
+                   slippage_pct=0.0005, commission_fixed=0.0):
+    
     if df.empty or 'Signal' not in df.columns:
-        return {'history': pd.DataFrame(), 'metrics': {}}
+        return {'history': pd.DataFrame(), 'metrics': {
+            'total_trades': 0, 'trades_won': 0, 'trades_lost': 0, 'win_rate': 0.0, 'max_drawdown': 0.0,
+            'net_return': 0.0, 'final_value': initial_capital, 'sharpe_ratio': 0.0, 'sortino_ratio': 0.0
+        }}
         
-    capital = initial_capital
-    position = 0 
-    
+    capital = float(initial_capital)
+    position = 0.0
+    entry_price = 0.0
+    highest_since_entry = 0.0
+    lowest_since_entry = 999999.0
+    trailing_stop_price = 0.0
+    cooldown_counter = 0
+    consecutive_buy_signals = 0
+    consecutive_sell_signals = 0
     history = []
-    trades_won = 0
-    trades_lost = 0
-    peak_capital = initial_capital
+    trades_won, trades_lost = 0, 0
+    peak_capital = float(initial_capital)
     max_drawdown = 0.0
-    buy_price = 0.0
+    pnl_per_trade = []
     
-    # Check if the dataset has at least 50 length? Handled in strategy.py
-    for index, row in df.iterrows():
-        price = row['Close']
-        signal = row['Signal']
+    # Kelly adaptativo desde data.attrs si existe
+    kelly_sizing = df.attrs.get('kelly_size', position_sizing)
+    
+    for idx_pos, (index, row) in enumerate(df.iterrows()):
+        price = float(row['Close'])
+        signal = float(row['Signal'])
         accion_tomada = "-"
+        if price <= 0: continue
+        if cooldown_counter > 0: cooldown_counter -= 1
         
-        # ALGORITMO DE EJECUCIÓN (Manejo de Riesgo: Stop Loss / Take Profit)
-        if position > 0:
-            ganancia_pct = (price - buy_price) / buy_price
-            if ganancia_pct <= -stop_loss:
-                # Vender TODO por Stop Loss
-                ganancia = position * price
-                capital += ganancia
-                trades_lost += 1
-                position = 0
-                accion_tomada = "STOP LOSS"
-            elif ganancia_pct >= take_profit:
-                # Vender TODO por Take Profit
-                ganancia = position * price
-                capital += ganancia
-                trades_won += 1
-                position = 0
-                accion_tomada = "TAKE PROFIT"
+        if signal >= 0.7: consecutive_buy_signals += 1; consecutive_sell_signals = 0
+        elif signal <= -0.7: consecutive_sell_signals += 1; consecutive_buy_signals = 0
+        else: consecutive_buy_signals = 0; consecutive_sell_signals = 0
+        
+        # SL dinámico por ATR
+        dynamic_sl = stop_loss
+        if use_atr_stop and 'ATR' in df.columns:
+            atr_val = _safe(row['ATR'])
+            if atr_val > 0 and price > 0:
+                dynamic_sl = max(0.02, min(0.15, (2.0 * atr_val) / price))
+        
+        # EXIT LOGIC
+        if position != 0:
+            if position > 0:
+                highest_since_entry = max(highest_since_entry, price)
+                ganancia_pct = (price - entry_price) / entry_price
+                if use_trailing_stop:
+                    gain = (highest_since_entry - entry_price) / entry_price
+                    if gain >= 0.10: trailing_stop_price = entry_price * 1.05
+                    elif gain >= 0.05: trailing_stop_price = entry_price
+            else:
+                lowest_since_entry = min(lowest_since_entry, price)
+                ganancia_pct = (entry_price - price) / entry_price
+                if use_trailing_stop:
+                    gain = (entry_price - lowest_since_entry) / entry_price
+                    if gain >= 0.10: trailing_stop_price = entry_price * 0.95
+                    elif gain >= 0.05: trailing_stop_price = entry_price
+            
+            cierre = False
+            razon = ""
+            if use_trailing_stop and trailing_stop_price > 0:
+                if (position > 0 and price <= trailing_stop_price) or (position < 0 and price >= trailing_stop_price):
+                    cierre, razon = True, "TRAILING STOP"
+            if not cierre and ganancia_pct <= -dynamic_sl:
+                cierre, razon = True, f"STOP LOSS ({dynamic_sl*100:.1f}%)"
+            if not cierre and ganancia_pct >= take_profit:
+                cierre, razon = True, "TAKE PROFIT"
+            if not cierre and ((position > 0 and signal <= -0.5) or (position < 0 and signal >= 0.5)):
+                cierre, razon = True, "SEÑAL CONTRARIA"
                 
-        if accion_tomada == "-":
-            # COMPRA
-            capital_a_invertir = initial_capital * position_sizing
-            if capital_a_invertir > capital:
-                capital_a_invertir = capital
-                
-            if signal == 1 and capital_a_invertir >= price: 
-                acciones = int(capital_a_invertir // price)
-                costo = acciones * price
-                
-                # Actualizar precio de compra promedio (simplificado)
-                buy_price = price if position == 0 else ((buy_price * position) + costo) / (position + acciones)
-                
-                capital -= costo
-                position += acciones
-                accion_tomada = "COMPRA"
-                
-            # VENTA
-            elif signal <= -0.5 and position > 0:
-                portion_to_sell = 1.0 if signal <= -1.0 else 0.5
-                acciones_a_vender = int(position * portion_to_sell)
-                if acciones_a_vender == 0 and position > 0:
-                    acciones_a_vender = position
-                    
-                ganancia = acciones_a_vender * price
-                capital += ganancia
-                
-                if price > buy_price:
-                    trades_won += 1
+            if cierre:
+                accion_tomada = razon
+                if position > 0:
+                    capital += position * (price * (1 - slippage_pct)) - commission_fixed
+                    if price * (1 - slippage_pct) > entry_price: trades_won += 1
+                    else: trades_lost += 1
+                    pnl_per_trade.append((price * (1 - slippage_pct)) - entry_price)
                 else:
-                    trades_lost += 1
-                    
-                position -= acciones_a_vender
-                accion_tomada = f"VENTA ({int(portion_to_sell*100)}%)"
-            
-        # MÉTRICAS DE RIESGO
-        valor_portafolio = capital + (position * price)
+                    exit_p_short = price * (1 + slippage_pct)
+                    pnl_cash = (entry_price - exit_p_short) * abs(position)
+                    capital += (abs(position) * entry_price) + pnl_cash - commission_fixed
+                    if exit_p_short < entry_price: trades_won += 1
+                    else: trades_lost += 1
+                    pnl_per_trade.append(entry_price - exit_p_short)
+                if "STOP LOSS" in razon: cooldown_counter = cooldown_days
+                position, entry_price, trailing_stop_price = 0.0, 0.0, 0.0
+                highest_since_entry, lowest_since_entry = 0.0, 999999.0
+
+        # ENTRY LOGIC
+        if position == 0 and accion_tomada == "-":
+            if cooldown_counter > 0:
+                accion_tomada = f"COOLDOWN ({cooldown_counter}d)"
+            else:
+                # Usar Kelly o position_sizing inicial
+                cap_to_inv = capital * kelly_sizing
+                if cap_to_inv > capital: cap_to_inv = capital
+                
+                if signal >= 0.7 and consecutive_buy_signals >= confirmation_bars:
+                    entry_p = price * (1 + slippage_pct)
+                    position = (cap_to_inv - commission_fixed) / entry_p
+                    capital -= cap_to_inv
+                    entry_price = entry_p
+                    highest_since_entry = entry_p
+                    accion_tomada = f"COMPRA (LONG)"
+                    consecutive_buy_signals = 0
+                elif signal <= -0.7 and consecutive_sell_signals >= confirmation_bars:
+                    entry_p = price * (1 - slippage_pct)
+                    position = -((cap_to_inv - commission_fixed) / entry_p)
+                    capital -= cap_to_inv
+                    entry_price = entry_p
+                    lowest_since_entry = entry_p
+                    accion_tomada = f"VENTA (SHORT)"
+                    consecutive_sell_signals = 0
+
+        # VALOR
+        if position >= 0: val_port = capital + (position * price)
+        else: val_port = capital + (abs(position) * entry_price) + (entry_price - price) * abs(position)
         
-        if valor_portafolio > peak_capital:
-            peak_capital = valor_portafolio
-            
-        drawdown = ((peak_capital - valor_portafolio) / peak_capital) * 100
-        if drawdown > max_drawdown:
-            max_drawdown = drawdown
+        peak_capital = max(peak_capital, val_port)
+        max_drawdown = max(max_drawdown, ((peak_capital - val_port) / peak_capital) * 100)
         
         history.append({
-            'Fecha': index, 
-            'Acion_Realizada': accion_tomada, 
-            'Precio_Ejecucion': price,
-            'Capital_Efectivo': capital, 
-            'Acciones_Poseidas': position, 
-            'Valor_Total': valor_portafolio
+            'Fecha': index, 'Accion': accion_tomada, 'Precio': round(price, 4), 'Valor_Total': round(val_port, 2),
+            'Kelly_Used': round(kelly_sizing, 4)
         })
         
     hist_df = pd.DataFrame(history)
+    val_final = hist_df['Valor_Total'].iloc[-1] if not hist_df.empty else initial_capital
+    retorno = ((val_final - initial_capital) / initial_capital) * 100
     
-    # CALCULAR MÉTRICAS FINALES
-    total_trades = trades_won + trades_lost
-    win_rate = (trades_won / total_trades * 100) if total_trades > 0 else 0.0
-    
-    valor_final = capital + (position * df['Close'].iloc[-1])
-    retorno_neto = ((valor_final - initial_capital) / initial_capital) * 100
-    
-    # Calcular Rendimiento Diario y ratios
-    hist_df['Rendimiento_Diario'] = hist_df['Valor_Total'].pct_change()
-    mean_rend = hist_df['Rendimiento_Diario'].mean()
-    std_rend = hist_df['Rendimiento_Diario'].std()
-    
-    # Anualizar (252 días de trading por año)
-    sharpe_ratio = (mean_rend / std_rend) * np.sqrt(252) if std_rend > 0 else 0.0
-    
-    downside_rend = hist_df[hist_df['Rendimiento_Diario'] < 0]['Rendimiento_Diario']
-    downside_std = downside_rend.std()
-    sortino_ratio = (mean_rend / downside_std) * np.sqrt(252) if downside_std > 0 else sharpe_ratio
-    
-    metrics = {
-        'total_trades': total_trades,
-        'win_rate': win_rate,
-        'max_drawdown': max_drawdown,
-        'net_return': retorno_neto,
-        'final_value': valor_final,
-        'sharpe_ratio': sharpe_ratio,
-        'sortino_ratio': sortino_ratio
-    }
-    
-    return {'history': hist_df, 'metrics': metrics}
+    return {'history': hist_df, 'metrics': {
+        'total_trades': trades_won + trades_lost, 'win_rate': round(trades_won/((trades_won+trades_lost)+1e-9)*100, 1),
+        'net_return': round(retorno, 2), 'max_drawdown': round(max_drawdown, 2), 'final_value': round(val_final, 2)
+    }}
+
+def _safe(val, default=0.0):
+    try: return float(val) if pd.notna(val) else default
+    except: return default
+
+def run_monte_carlo(metrics, num_simulations=1000, horizon=20):
+    results = []
+    wr = metrics['win_rate'] / 100
+    avg_r = metrics['net_return'] / (metrics['total_trades'] + 1e-9)
+    for _ in range(num_simulations):
+        current = 1.0
+        for _ in range(horizon):
+            outcome = 1 if np.random.random() < wr else -1
+            current *= (1 + (outcome * avg_r/100) * (1 + (np.random.random() - 0.5) * 0.2))
+        results.append(current)
+    return np.array(results)

@@ -1,3 +1,6 @@
+.states
+assets/external/
+.web
 # Python
 __pycache__/
 *.py[cod]
@@ -25,7 +28,7 @@ venv/
 ENV/
 
 # Streamlit
-.streamlit/
+.streamlit/secrets.toml
 
 # Database (Private trade history)
 *.db
@@ -33,6 +36,7 @@ trade_history.db
 
 # Logs and temp
 *.log
+app.log
 /tmp/
 
 # OS
@@ -42,3 +46,17 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+
+# Temp files and pytest
+scratch/
+.pytest_cache/
+test_results.txt
+
+# Environment files
+.env.dev
+.env.local
+
+# Backups and broken code
+model_backups/
+frontend_broken/
+.agents/

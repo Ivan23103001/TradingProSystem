@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+
+/* Configuración General */
+* {
+  font-family: 'Outfit', sans-serif !important;
+}
+
+body {
+  background: radial-gradient(circle at 50% 0%, #0b1120 0%, #040710 100%) !important;
+  min-height: 100vh;
+}
+
+/* Personalización de Scrollbars Modernas */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Animaciones Pulsantes de Neón */
+@keyframes neon-pulse-green {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(16, 185, 129, 0.3), 0 0 10px rgba(16, 185, 129, 0.2);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.7), 0 0 20px rgba(16, 185, 129, 0.4);
+    opacity: 0.7;
+  }
+}
+
+.pulse-neon-green {
+  animation: neon-pulse-green 2s infinite ease-in-out;
+}
+
+/* Transiciones Suaves para Componentes Interactivos */
+.ticker-pill-btn {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.ticker-pill-btn:hover {
+  transform: scale(1.03) translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), 0 0 8px rgba(59, 130, 246, 0.15) !important;
+}
+
+/* Tarjetas Premium con Glassmorphism */
+.premium-glass-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.premium-glass-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.09) !important;
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.8), 0 0 16px -4px rgba(59, 130, 246, 0.1) !important;
+}
+
+/* Efectos de Brillo para los Inputs del Sidebar */
+.premium-input {
+  transition: all 0.2s ease-in-out !important;
+}
+
+.premium-input:focus {
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15) !important;
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Sliders de Riesgo Refinados */
+.rt-SliderRoot {
+  cursor: pointer;
+}
+
+.rt-SliderThumb {
+  transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.8) !important;
+}
+
+.rt-SliderThumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 1) !important;
+}
+
+/* Estilo para las Fila de Tabla */
+.rt-TableRow {
+  transition: background-color 0.2s ease !important;
+}
+
+.rt-TableRow:hover {
+  background-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+/* Pestañas (Tabs) personalizadas */
+.rt-TabsTrigger {
+  transition: all 0.2s ease-in-out !important;
+  border-radius: 6px !important;
+}
+
+.rt-TabsTrigger[data-state="active"] {
+  background-color: rgba(59, 130, 246, 0.08) !important;
+  color: #60a5fa !important;
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.2) !important;
+}

@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def main():
     from core.health_server import start_health_server, _state
+    from core.telegram_listener import TelegramListener
     logging.info("Iniciando Bot Worker 24/7...")
     start_health_server(port=8001)
     init_db()
@@ -34,6 +35,14 @@ def main():
     
     bc = BrokerClient(api_key, secret_key, paper=is_paper) if api_key and secret_key else None
     notifier = TelegramNotifier(bot_token, chat_id) if bot_token and chat_id else None
+
+    # Iniciar escuchador interactivo de Telegram si hay credenciales
+    if bot_token and chat_id:
+        try:
+            listener = TelegramListener(bot_token, chat_id, broker_client=bc)
+            listener.start()
+        except Exception as e:
+            logging.error(f"No se pudo iniciar el escuchador de Telegram: {e}")
 
     if bc and bc.is_connected():
         logging.info("Broker Conectado Exitosamente.")

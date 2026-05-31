@@ -5,8 +5,11 @@ import asyncio
 import concurrent.futures
 import logging
 import requests
+import time
+import threading
 from datetime import datetime
-from fastapi import FastAPI, WebSocket, Query, HTTPException
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, WebSocket, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -26,7 +29,63 @@ from core.brain import TradingBrain, DB_FILE
 init_db()
 TradingBrain.initialize()
 
-app = FastAPI(title="TradingProSystem API v5.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global executor
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
+    logging.info("ThreadPoolExecutor iniciado (30 workers).")
+    yield
+    logging.info("Shutting down ThreadPoolExecutor...")
+    executor.shutdown(wait=True)
+    logging.info("ThreadPoolExecutor finalizado limpiamente.")
+
+app = FastAPI(title="TradingProSystem API v5.0", lifespan=lifespan)
+
+# --- API Key Auth Middleware (3.5) ---
+# Lee API_KEY desde bot_config.json; si no existe, genera una por defecto
+def _load_api_key():
+    try:
+        config = TradingBrain.get_runtime_config()
+        key = config.get("api_key", "")
+        if key and len(key) >= 8:
+            return key
+    except Exception:
+        pass
+    # Generar clave por defecto si no existe en config
+    default_key = os.getenv("TRADING_API_KEY", "tradingpro-api-key-change-me")
+    return default_key
+
+API_KEY = _load_api_key()
+
+@app.middleware("http")
+async def api_key_auth_middleware(request: Request, call_next):
+    # Solo proteger endpoints POST /api/config y rutas sensibles
+    if request.url.path in ("/api/config",) and request.method == "POST":
+        auth_header = request.headers.get("X-API-Key", "")
+        if not auth_header or auth_header != API_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "API Key inválida o ausente. Usa header X-API-Key."}
+            )
+    return await call_next(request)
+
+from fastapi.responses import JSONResponse
+
+# --- Rate Limiter para yfinance (2.3) ---
+# Semáforo global: máximo 5 requests simultáneos a yfinance, con delay entre lotes
+_yf_semaphore = threading.Semaphore(5)
+_yf_last_call = 0.0
+_YF_MIN_INTERVAL = 0.3  # 300ms mínimo entre requests para no triggerear rate-limit
+
+def _rate_limited_fetch(ticker, period, interval, spy_sentiment):
+    """Wrapper con rate-limit para llamadas a yfinance desde el pool."""
+    global _yf_last_call
+    with _yf_semaphore:
+        elapsed = time.time() - _yf_last_call
+        if elapsed < _YF_MIN_INTERVAL:
+            time.sleep(_YF_MIN_INTERVAL - elapsed)
+        _yf_last_call = time.time()
+        return _analyze_ticker_sync(ticker, period, interval, spy_sentiment)
 
 # Enable CORS for frontend ports and production domains
 allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "")
@@ -50,14 +109,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Thread pool for parallel yfinance fetches and scanning
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
+# Thread pool for parallel yfinance fetches and scanning (inicializado en lifespan)
+executor = None
 
 def get_broker_client():
     """Gets the Alpaca broker client using configured environment variables."""
     api_key = os.getenv("ALPACA_API_KEY", "")
     secret_key = os.getenv("ALPACA_SECRET_KEY", "")
-    paper = os.getenv("ALPACA_PAPER", "true").lower() == "true"
+    paper_str = os.getenv("ALPACA_PAPER", "true").lower()
+    paper = paper_str == "true"
+    
+    # 3.1: Check explícito dev/prod — bloquear dinero real en entorno dev
+    env_mode = os.getenv("TRADING_ENV", "dev").lower()
+    if env_mode == "dev" and not paper:
+        logging.critical("🚨 SEGURIDAD: TRADING_ENV=dev pero ALPACA_PAPER=false. Bloqueando acceso a cuenta real.")
+        return None
+    
     if api_key and secret_key:
         return BrokerClient(api_key, secret_key, paper=paper)
     return None
@@ -178,10 +245,10 @@ def get_market_map(interval: str = "15m", period: str = "5d"):
 
     spy_sentiment = get_spy_sentiment()
     
-    # Run fetches and calculations in parallel
+    # Run fetches and calculations in parallel with rate limiting
     futures = [
-        executor.submit(_analyze_ticker_sync, t, interval, period, spy_sentiment)
-        for t in tickers_list  # all tickers in watchlist
+        executor.submit(_rate_limited_fetch, t, interval, period, spy_sentiment)
+        for t in tickers_list
     ]
     results = []
     for f in concurrent.futures.as_completed(futures):
@@ -567,9 +634,9 @@ def run_scanner_endpoint(interval: str = "15m", period: str = "5d"):
 
         spy_sentiment = get_spy_sentiment()
 
-        # Run scans in parallel
+        # Run scans in parallel with rate limiting
         futures = [
-            executor.submit(_analyze_ticker_sync, t, interval, period, spy_sentiment)
+            executor.submit(_rate_limited_fetch, t, interval, period, spy_sentiment)
             for t in tickers_list
         ]
         results = []
@@ -611,4 +678,4 @@ def run_scanner_endpoint(interval: str = "15m", period: str = "5d"):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=False)

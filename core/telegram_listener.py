@@ -151,7 +151,6 @@ class TelegramListener:
                 (f"{hoy}%",)
             )
             rows = cursor.fetchall()
-            conn.close()
             
             if not rows:
                 self.send_reply(chat_id, f"📭 *Historial:* No se han registrado operaciones hoy (`{hoy}`).")

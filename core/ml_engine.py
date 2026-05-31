@@ -8,11 +8,68 @@ from sklearn.model_selection import train_test_split
 import joblib
 import os
 import logging
+import hashlib
+import hmac
 
 # Directorio raíz del proyecto (resuelto desde la ubicación de este archivo)
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 MODEL_PATH = str(_BASE_DIR / "ml_trading_model.pkl")
+MODEL_SIG_PATH = MODEL_PATH + ".sig"
 MODEL_BACKUPS_DIR = _BASE_DIR / "model_backups"
+
+# Clave de firma HMAC para integridad del modelo (anti-manipulación pickle)
+# Derivada de machine-id si existe, más un secreto fijo como fallback
+def _derive_signing_key():
+    key = b"TradingProSystem_v5_ML_Model_Signing_Key_2026"
+    try:
+        # Intentar derivar de /etc/machine-id (Linux) o registry (Windows)
+        if os.name == "posix" and os.path.exists("/etc/machine-id"):
+            with open("/etc/machine-id", "rb") as f:
+                machine_id = f.read().strip()
+            key = hashlib.pbkdf2_hmac("sha256", key, machine_id, 10000)
+        elif os.name == "nt":
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0 and "MachineGuid" in result.stdout:
+                    guid = result.stdout.split("REG_SZ")[-1].strip().encode()
+                    key = hashlib.pbkdf2_hmac("sha256", key, guid, 10000)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return key
+
+_SIGNING_KEY = _derive_signing_key()
+
+def _sign_data(data: bytes) -> str:
+    """Genera firma HMAC-SHA256 de los datos serializados."""
+    return hmac.new(_SIGNING_KEY, data, hashlib.sha256).hexdigest()
+
+def _verify_integrity(model_path=None):
+    """
+    Verifica que el archivo .pkl no haya sido manipulado usando su firma HMAC.
+    Retorna True si la firma es válida, False si hay manipulación o falta firma.
+    """
+    pkl_path = model_path or MODEL_PATH
+    sig_path = pkl_path + ".sig"
+    if not os.path.exists(pkl_path):
+        return False
+    if not os.path.exists(sig_path):
+        logging.warning(f"[!] Sin firma para {pkl_path} — posible archivo legacy sin proteger.")
+        return True  # Permitir carga de modelos legacy sin firma (no romper compatibilidad)
+    with open(pkl_path, "rb") as f:
+        raw = f.read()
+    with open(sig_path, "r") as f:
+        expected_sig = f.read().strip()
+    computed_sig = _sign_data(raw)
+    if not hmac.compare_digest(computed_sig, expected_sig):
+        logging.error(f"[!] FIRMA INVALIDA para {pkl_path} — posible manipulación del modelo pickle.")
+        return False
+    return True
 
 def prepare_features(df, bars_forward=3, min_move_pct=0.015):
     """
@@ -68,9 +125,12 @@ def prepare_features(df, bars_forward=3, min_move_pct=0.015):
         features += ['Return_1d', 'Return_5d']
         
         # Target: Clean move — sube ≥ min_move_pct en bars_forward barras sin caer > (min_move_pct / 2) en el camino
+        # v5.1: forward_min mira hacia adelante (sin doble shift que perdía 2*bars_forward filas)
+        forward_low = data['Low'].iloc[::-1].rolling(bars_forward + 1).min().iloc[::-1]
+        forward_low.index = data.index
         data['Target'] = (
             (data['Close'].shift(-bars_forward) > data['Close'] * (1.0 + min_move_pct)) &
-            (data['Low'].rolling(bars_forward).min().shift(-bars_forward) > data['Close'] * (1.0 - min_move_pct / 2.0))
+            (forward_low > data['Close'] * (1.0 - min_move_pct / 2.0))
         ).astype(int)
         data = data.dropna(subset=features + ['Target'])
         
@@ -147,6 +207,14 @@ def train_trading_model(df, n_estimators=150, max_depth=12, bars_forward=3, min_
             'trained_at': pd.Timestamp.now().isoformat()
         }, MODEL_PATH)
         
+        # Firmar el modelo para detectar manipulaciones (anti-pickle exploit)
+        with open(MODEL_PATH, "rb") as f:
+            raw_model = f.read()
+        signature = _sign_data(raw_model)
+        with open(MODEL_SIG_PATH, "w") as f:
+            f.write(signature)
+        logging.info(f"🔐 Modelo ML firmado (HMAC-SHA256) → {MODEL_SIG_PATH}")
+        
         return accuracy, f"Entrenamiento exitoso (Accuracy Ensamble: {accuracy:.1%}, Features: {len(feature_names)})"
     except Exception as e:
         return None, str(e)
@@ -154,6 +222,12 @@ def train_trading_model(df, n_estimators=150, max_depth=12, bars_forward=3, min_
 def get_ml_prediction(df):
     try:
         if not os.path.exists(MODEL_PATH): return 50
+        
+        # Verificar integridad del modelo antes de cargar (anti-manipulación pickle)
+        if not _verify_integrity(MODEL_PATH):
+            logging.error("[!] Modelo ML rechazado por fallo de integridad (firma HMAC inválida).")
+            return 50
+        
         saved = joblib.load(MODEL_PATH)
         
         # Verificar coincidencia de versión de sklearn
@@ -162,18 +236,23 @@ def get_ml_prediction(df):
             if saved_ver != 'unknown' and saved_ver != sklearn.__version__:
                 logging.warning(f"[!] Modelo ML entrenado con sklearn {saved_ver}, pero la versión actual es {sklearn.__version__}")
         
-        # Soporte para retrocompatibilidad con el modelo anterior
+        # Soporte para retrocompatibilidad con el modelo anterior (legacy sin ensamble)
         if isinstance(saved, dict) and 'rf_model' not in saved:
-            model = saved['model'] if isinstance(saved, dict) else saved
-            expected_features = saved.get('features', None) if isinstance(saved, dict) else None
+            model = saved.get('model')
+            if model is None:
+                logging.error("[!] Modelo legacy sin clave 'model' ni 'rf_model' — corrupto.")
+                return 50
+            expected_features = saved.get('features', None)
             X, _, actual_features = prepare_features(df)
             if X.empty: return 50
             if expected_features and set(expected_features) != set(actual_features):
                  return 50
             last_row = X.iloc[[-1]]
-            probs = model.predict_proba(last_row)[0]
-            classes = model.classes_.tolist()
-            if 1 in classes: return int(probs[classes.index(1)] * 100)
+            # Legacy: modelo simple sin scaler
+            if hasattr(model, 'predict_proba'):
+                probs = model.predict_proba(last_row)[0]
+                classes = model.classes_.tolist()
+                if 1 in classes: return int(probs[classes.index(1)] * 100)
             return 50
             
         # Inferencia con el nuevo Ensamble robusto (RF + GB)

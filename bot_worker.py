@@ -1,7 +1,10 @@
 import time
 import logging
 import os
+import re
+import concurrent.futures
 from datetime import datetime
+import pandas as pd
 
 from core.data_fetcher import get_stock_data
 from core.strategy import apply_strategy
@@ -16,6 +19,21 @@ import pytz
 # Memoria de estados para trazabilidad (Punto 5)
 trade_reasons = {}
 software_monitored = {}  # {symbol: {side, entry_price, sl_price, tp_price, time}}
+
+def _analyze_ticker_parallel(ticker, period, interval, spy_sentiment):
+    """Worker function to safely fetch and analyze a single ticker (parallel-safe)."""
+    try:
+        df = get_stock_data(ticker, period=period, interval=interval)
+        if df.empty or len(df) < 50:
+            return {"ticker": ticker, "da": None, "price": 0, "score": 50, "raw_signal": 0.0, "ml_conf": 50, "error": "no_data"}
+        da = apply_strategy(df, spy_sentiment=spy_sentiment, ticker_symbol=ticker)
+        price = float(da['Close'].iloc[-1])
+        score = int(da['Score'].iloc[-1])
+        raw_signal = float(da['Signal'].iloc[-1])
+        ml_conf = int(da.attrs.get('ml_prediction', 50))
+        return {"ticker": ticker, "da": da, "price": price, "score": score, "raw_signal": raw_signal, "ml_conf": ml_conf, "error": None}
+    except Exception as e:
+        return {"ticker": ticker, "da": None, "price": 0, "score": 50, "raw_signal": 0.0, "ml_conf": 50, "error": str(e)}
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -64,7 +82,7 @@ def main():
             mkt_open, mkt_msg = is_market_open()
             
             tickers_input = config.get('tickers', '')
-            tickers = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
+            tickers = [t.strip().upper() for t in tickers_input.split(',') if t.strip() and re.match(r'^[A-Z0-9\.\-]{1,10}$', t.strip().upper())]
             
             stop_loss_pct = float(config.get('stop_loss_pct', 8.0))
             take_profit_pct = float(config.get('take_profit_pct', 15.0))
@@ -100,12 +118,16 @@ def main():
                 archive_old_trades(days_to_keep=90)
                 try:
                     from core.ml_engine import train_trading_model
+                    all_dfs = []
                     for ticker in tickers[:5]:
                         df_t = get_stock_data(ticker, period="2y", interval="1d")
                         if not df_t.empty and len(df_t) >= 100:
                             da_t = apply_strategy(df_t, ticker_symbol=ticker)
-                            _, retrain_msg = train_trading_model(da_t, bars_forward=3, min_move_pct=0.015)
-                            logging.info(f"🤖 Retrain {ticker}: {retrain_msg}")
+                            all_dfs.append(da_t)
+                    if all_dfs:
+                        combined = pd.concat(all_dfs)
+                        _, retrain_msg = train_trading_model(combined, bars_forward=3, min_move_pct=0.015)
+                        logging.info(f"🤖 Retrain consolidado ({len(all_dfs)} tickers): {retrain_msg}")
                     state_memory["last_retrain"] = today_str
                     logging.info("✅ Re-entrenamiento semanal completado.")
                     if notifier:
@@ -297,17 +319,30 @@ def main():
             # Leer configuración de gestión de riesgo
             use_atr_sl = config.get('use_atr_sl', True)
 
+            # Fase 1: Descarga y análisis en paralelo (ThreadPoolExecutor)
+            ticker_results = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ticker_executor:
+                futures_map = {ticker_executor.submit(_analyze_ticker_parallel, t, period, interval, spy_sentiment): t for t in tickers}
+                for future in concurrent.futures.as_completed(futures_map):
+                    try:
+                        result = future.result()
+                        ticker_results[result["ticker"]] = result
+                    except Exception as e:
+                        t = futures_map[future]
+                        logging.error(f"Error procesando {t}: {e}")
+
             for t in tickers:
                 try:
-                    df = get_stock_data(t, period=period, interval=interval)
-                    if df.empty or len(df) < 50:
+                    result = ticker_results.get(t)
+                    if result is None or result.get("error"):
                         continue
-                        
-                    da = apply_strategy(df, spy_sentiment=spy_sentiment, ticker_symbol=t)
-                    price = float(da['Close'].iloc[-1])
-                    score = int(da['Score'].iloc[-1])
-                    raw_signal = float(da['Signal'].iloc[-1])
-                    ml_conf = int(da.attrs.get('ml_prediction', 50))
+                    da = result["da"]
+                    if da is None:
+                        continue
+                    price = result["price"]
+                    score = result["score"]
+                    raw_signal = result["raw_signal"]
+                    ml_conf = result["ml_conf"]
                     
                     if raw_signal >= 1.0:
                         signal = "LONG"
@@ -448,6 +483,7 @@ def main():
                                 logging.info(f"TRADE EJECUTADO {t} {signal} - {msg}")
                                 save_trade(t, trade_type, price, final_trade_amount, score)
                                 state_memory[f"last_trade_{t}"] = signal
+                                open_count += 1
 
                                 trade_reasons[t] = f"Señal cambiada a {signal} con Score {score}"
 

@@ -11,30 +11,43 @@ import sqlite3
 import os
 import logging
 import pathlib
+import threading
 
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 DB_NAME = str(_BASE_DIR / "trade_history.db")
 
+# Pool de conexiones thread-local: cada hilo reutiliza su propia conexión.
+# SQLite en modo WAL + check_same_thread=False permite compartir la conexión
+# entre hilos, pero thread-local evita contención de cursor.
+_tls = threading.local()
+
+
+def _new_connection(db_path):
+    """Crea una nueva conexión SQLite configurada para concurrencia segura."""
+    conn = sqlite3.connect(db_path, timeout=15, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA foreign_keys=ON;")
+    conn.execute("PRAGMA busy_timeout=15000;")
+    return conn
+
 
 def get_connection(db_path=None):
     """
-    Abre una conexión SQLite configurada para concurrencia segura.
+    Obtiene una conexión SQLite persistente por hilo (thread-local pool).
     
     - WAL mode: permite lecturas simultáneas con escrituras.
     - timeout=15: espera hasta 15s si otro proceso tiene el lock.
     - check_same_thread=False: permite compartir conexión entre threads.
+    - Reutiliza la conexión del hilo en llamadas sucesivas (sin abrir/cerrar por query).
     """
     path = db_path or DB_NAME
-    conn = sqlite3.connect(path, timeout=15, check_same_thread=False)
-    
-    # Activar WAL (Write-Ahead Logging) — crucial para concurrencia
-    conn.execute("PRAGMA journal_mode=WAL;")
-    # Activar foreign keys por buenas prácticas
-    conn.execute("PRAGMA foreign_keys=ON;")
-    # Timeout de busy (redundante con el parámetro timeout, pero explícito)
-    conn.execute("PRAGMA busy_timeout=15000;")
-    
-    return conn
+    pool = getattr(_tls, 'conn_pool', None)
+    if pool is None:
+        pool = {}
+        _tls.conn_pool = pool
+    if path not in pool:
+        pool[path] = _new_connection(path)
+    return pool[path]
 
 
 def init_db(db_path=None):
@@ -76,8 +89,6 @@ def save_trade(ticker, tipo, precio, cantidad, score, db_path=None):
         logging.error(f"DB locked al guardar trade {ticker}: {e}")
     except Exception as e:
         logging.error(f"Error guardando trade: {e}")
-    finally:
-        conn.close()
 
 
 def save_equity(equity, db_path=None):
@@ -95,8 +106,6 @@ def save_equity(equity, db_path=None):
         logging.error(f"DB locked al guardar equity: {e}")
     except Exception as e:
         logging.error(f"Error guardando equity: {e}")
-    finally:
-        conn.close()
 
 
 def get_trade_history(limit=500, db_path=None):
@@ -114,8 +123,6 @@ def get_trade_history(limit=500, db_path=None):
     except Exception as e:
         logging.error(f"Error leyendo historial: {e}")
         return pd.DataFrame()
-    finally:
-        conn.close()
 
 
 def get_equity_history(limit=1000, db_path=None):
@@ -133,8 +140,6 @@ def get_equity_history(limit=1000, db_path=None):
     except Exception as e:
         logging.error(f"Error leyendo equity history: {e}")
         return pd.DataFrame()
-    finally:
-        conn.close()
 
 
 def update_last_trade_pnl(ticker, exit_price, reason, db_path=None):
@@ -174,8 +179,6 @@ def update_last_trade_pnl(ticker, exit_price, reason, db_path=None):
             logging.debug(f"No se encontró trade abierto sin PnL para {ticker} en la DB.")
     except Exception as e:
         logging.error(f"Error actualizando PnL para {ticker}: {e}")
-    finally:
-        conn.close()
 
 def archive_old_trades(days_to_keep=90, db_path=None):
     """
@@ -210,5 +213,3 @@ def archive_old_trades(days_to_keep=90, db_path=None):
             logging.info(f"🧹 [DB Mantenimiento] Eliminados {deleted_trades} trades y {deleted_equity} registros de equity anteriores a {cutoff_date}.")
     except Exception as e:
         logging.error(f"Error durante el mantenimiento de la base de datos: {e}")
-    finally:
-        conn.close()

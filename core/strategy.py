@@ -16,6 +16,7 @@ except (ImportError, ValueError):
 
 _macro_cache = {"data": None, "ts": 0}
 _htf_cache = {}   # {ticker_symbol: {"bias": int, "ts": float}}
+_HTF_CACHE_MAX = 150  # Límite para evitar crecimiento indefinido en VPS 24/7
 
 def _safe(val, default=0.0):
     """Devuelve el valor si no es NaN, de lo contrario devuelve default."""
@@ -168,17 +169,23 @@ def get_macro_regime():
 def calculate_volume_profile(df, lookback=50):
     """
     Calcula dinámicamente el Point of Control (POC) local del Volume Profile.
+    v5.1: Vectorizado con rolling apply — sin loops for (cumple SMC_TECHNICAL_LOGIC.md).
     """
-    poc_series = pd.Series(index=df.index, dtype=float)
+    price_bins = df['Close'].round(2)
     
-    for i in range(lookback, len(df)):
-        window = df.iloc[i-lookback:i]
-        # Redondear precios para crear bins de agrupación de volumen
-        rounded_prices = window['Close'].round(2)
-        vol_profile = window['Volume'].groupby(rounded_prices).sum()
-        if not vol_profile.empty:
-            poc_series.iloc[i] = vol_profile.idxmax()
-            
+    def _poc_of_window(window_close, window_vol):
+        """Encuentra el precio con mayor volumen acumulado en una ventana."""
+        profile = window_vol.groupby(window_close).sum()
+        return profile.idxmax() if len(profile) > 0 else window_close.iloc[-1]
+    
+    # Usamos rolling().apply() completamente vectorizado en pandas
+    poc_series = (
+        pd.DataFrame({'price_bin': price_bins, 'volume': df['Volume']})
+        .rolling(window=lookback, min_periods=lookback)
+        .apply(lambda w: _poc_of_window(w['price_bin'], w['volume']), raw=False)
+        ['price_bin']
+    )
+    
     df['POC'] = poc_series.ffill().fillna(df['Close'])
     return df
 
@@ -301,7 +308,7 @@ def apply_strategy(df, spy_sentiment=None, ticker_symbol=None):
 
     # IMP-3: Dynamic VIX Threshold (calculado una vez; VIX es el mismo para todas las velas)
     vix_level = macro_regime.get("vix", 20)
-    threshold = next(t for vmax, t in TradingBrain.VIX_SCORE_THRESHOLDS if vix_level < vmax)
+    threshold = next((t for vmax, t in TradingBrain.VIX_SCORE_THRESHOLDS if vix_level < vmax), 75)
 
     # IMP-4: HTF Daily Trend Confirmation
     htf_bias = 0  # 0 = neutral, 1 = alcista, -1 = bajista
@@ -318,9 +325,20 @@ def apply_strategy(df, spy_sentiment=None, ticker_symbol=None):
                     ema20_d = ta.trend.ema_indicator(daily_df['Close'], window=20)
                     ema50_d = ta.trend.ema_indicator(daily_df['Close'], window=50)
                     htf_bias = 1 if _safe(ema20_d.iloc[-1]) > _safe(ema50_d.iloc[-1]) else -1
+                    _htf_cache[ticker_symbol] = {"bias": htf_bias, "ts": _time.time()}
+                else:
+                    _htf_cache[ticker_symbol] = {"bias": 0, "ts": _time.time()}
             except Exception:
                 htf_bias = 0
-            _htf_cache[ticker_symbol] = {"bias": htf_bias, "ts": _time.time()}
+                _htf_cache[ticker_symbol] = {"bias": 0, "ts": _time.time()}
+
+    # Limpieza: evitar crecimiento indefinido en VPS (máx 150 tickers)
+    if len(_htf_cache) > _HTF_CACHE_MAX:
+        # Eliminar las entradas más antiguas (por timestamp) para volver al límite
+        sorted_keys = sorted(_htf_cache, key=lambda k: _htf_cache[k].get("ts", 0))
+        keys_to_remove = sorted_keys[:len(_htf_cache) - _HTF_CACHE_MAX]
+        for k in keys_to_remove:
+            del _htf_cache[k]
     bull_ob_win = data['Bullish_OB'].rolling(window=20, min_periods=1).max().shift(1)
     bear_ob_win = data['Bearish_OB'].rolling(window=20, min_periods=1).min().shift(1)
     bull_fvg_win = data['FVG_Bullish'].rolling(window=10, min_periods=1).max().shift(1)

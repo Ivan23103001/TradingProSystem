@@ -166,19 +166,19 @@ export default function Dashboard() {
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Refresh Market Map
-  const loadMarketMap = () => {
+  // Refresh Market Map (useCallback para estabilidad de dependencias)
+  const loadMarketMap = useCallback(() => {
     fetch(`${API_BASE}/api/market-map?interval=${interval}&period=${period}`)
       .then((r) => r.json())
       .then((json) => {
         if (Array.isArray(json)) setMarketMap(json);
       })
       .catch(() => {});
-  };
+  }, [interval, period]);
 
   useEffect(() => {
     loadMarketMap();
-  }, [interval, period]);
+  }, [loadMarketMap]);
 
   // Load Tab Content dynamically
   useEffect(() => {
@@ -286,7 +286,7 @@ export default function Dashboard() {
         loadMarketMap();
         loadDashboardData();
       }
-    } catch (err) {
+    } catch {
       alert("Error guardando la configuración.");
     } finally {
       setSavingConfig(false);

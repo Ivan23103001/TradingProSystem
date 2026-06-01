@@ -599,6 +599,7 @@ def get_system_status_endpoint():
         # Background worker health check
         worker_uptime = "Inactivo"
         worker_connected = False
+        is_retraining = False
         try:
             resp = requests.get("http://localhost:8001/health", timeout=1)
             if resp.status_code == 200:
@@ -606,6 +607,7 @@ def get_system_status_endpoint():
                 uptime_seconds = hdata.get("uptime_seconds", 0)
                 worker_uptime = f"Uptime: {uptime_seconds//3600}h {(uptime_seconds%3600)//60}m"
                 worker_connected = True
+                is_retraining = hdata.get("is_retraining", False)
         except Exception:
             pass
 
@@ -630,6 +632,7 @@ def get_system_status_endpoint():
             "cache_label": f"{cache_stats['total_entries']} entradas ({cache_stats['fresh']} frescas, {cache_stats['stale']} expiradas)",
             "worker_uptime": worker_uptime,
             "worker_connected": worker_connected,
+            "is_retraining": is_retraining,
             "broker_degraded": broker_degraded
         }
     except Exception as e:

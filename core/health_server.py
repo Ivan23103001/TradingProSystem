@@ -10,7 +10,7 @@ import time
 
 app = FastAPI()
 _start_time = time.time()
-_state = {"last_scan": None, "total_trades_session": 0, "last_error": None}
+_state = {"last_scan": None, "total_trades_session": 0, "last_error": None, "is_retraining": False}
 
 @app.get("/health")
 def health():
@@ -19,8 +19,14 @@ def health():
         "uptime_seconds": int(time.time() - _start_time),
         "last_scan": _state.get("last_scan"),
         "trades_session": _state.get("total_trades_session"),
-        "last_error": _state.get("last_error")
+        "last_error": _state.get("last_error"),
+        "is_retraining": _state.get("is_retraining", False)
     }
+
+@app.get("/retrain-status")
+def retrain_status():
+    """Estado del hilo de reentrenamiento ML en background."""
+    return {"is_retraining": _state.get("is_retraining", False)}
 
 def start_health_server(port=8001):
     """Inicia el servidor en un thread daemon (no bloquea el worker)."""

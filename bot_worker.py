@@ -158,31 +158,44 @@ def main():
             logging.info(f"Sentimiento del Mercado (SPY): {'BULL' if spy_sentiment == 1 else 'BEAR' if spy_sentiment == -1 else 'NEUTRAL'}")
 
             # =================================================================
-            # IMP-5: WEEKLY AUTO-RETRAIN (Domingos)
+            # IMP-5: WEEKLY AUTO-RETRAIN (Domingos) — EN HILO SECUNDARIO
             # =================================================================
             today_str = datetime.today().strftime('%Y-%m-%d')
-            if datetime.today().weekday() == 6 and state_memory.get("last_retrain") != today_str:
-                logging.info("📅 Domingo detectado — iniciando mantenimiento de DB y re-entrenamiento...")
-                from core.database import archive_old_trades
-                archive_old_trades(days_to_keep=90)
-                try:
-                    from core.ml_engine import train_trading_model
-                    all_dfs = []
-                    for ticker in tickers[:5]:
-                        df_t = get_stock_data(ticker, period="2y", interval="1d")
-                        if not df_t.empty and len(df_t) >= 100:
-                            da_t = apply_strategy(df_t, ticker_symbol=ticker)
-                            all_dfs.append(da_t)
-                    if all_dfs:
-                        combined = pd.concat(all_dfs)
-                        _, retrain_msg = train_trading_model(combined, bars_forward=3, min_move_pct=0.015)
-                        logging.info(f"🤖 Retrain consolidado ({len(all_dfs)} tickers): {retrain_msg}")
-                    state_memory["last_retrain"] = today_str
-                    logging.info("✅ Re-entrenamiento semanal completado.")
-                    if notifier:
-                        notifier.send_message("✅ Modelo ML re-entrenado exitosamente (re-entrenamiento dominical).")
-                except Exception as e:
-                    logging.error(f"❌ Error en re-entrenamiento: {e}")
+            if datetime.today().weekday() == 6 and state_memory.get("last_retrain") != today_str and not _state.get("is_retraining", False):
+                state_memory["last_retrain"] = today_str  # Marcar inmediatamente para no reintentar
+                logging.info("📅 Domingo detectado — lanzando re-entrenamiento en background...")
+
+                def _retrain_worker():
+                    """Hilo secundario: prepara datos, entrena modelo, actualiza caché."""
+                    _state["is_retraining"] = True
+                    try:
+                        from core.database import archive_old_trades
+                        from core.ml_engine import train_trading_model
+                        archive_old_trades(days_to_keep=90)
+
+                        all_dfs = []
+                        for ticker in tickers[:5]:
+                            df_t = get_stock_data(ticker, period="2y", interval="1d")
+                            if not df_t.empty and len(df_t) >= 100:
+                                da_t = apply_strategy(df_t, ticker_symbol=ticker)
+                                all_dfs.append(da_t)
+
+                        if all_dfs:
+                            combined = pd.concat(all_dfs)
+                            _, retrain_msg = train_trading_model(combined, bars_forward=3, min_move_pct=0.015)
+                            logging.info(f"🤖 Retrain consolidado ({len(all_dfs)} tickers): {retrain_msg}")
+                            if notifier:
+                                notifier.send_message(f"✅ Modelo ML re-entrenado exitosamente ({retrain_msg})")
+                        else:
+                            logging.warning("Retrain sin datos suficientes — omitido.")
+                    except Exception as e:
+                        logging.error(f"❌ Error en re-entrenamiento: {e}")
+                        if notifier:
+                            notifier.send_message(f"❌ Falló re-entrenamiento ML: {e}")
+                    finally:
+                        _state["is_retraining"] = False
+
+                threading.Thread(target=_retrain_worker, name="ml-retrain", daemon=True).start()
 
             # Filtro de Horarios Críticos (Punto 4)
             et = pytz.timezone('US/Eastern')

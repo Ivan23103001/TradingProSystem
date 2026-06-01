@@ -1,6 +1,35 @@
 import sys
 import os
 import pathlib
+
+# ═══════════════════════════════════════════════════════════════
+# PRIMERÍSIMO: cargar variables de entorno desde .env
+# Debe ejecutarse ANTES de cualquier importación de módulos locales
+# para que database, brain, etc. vean el entorno completo.
+# ═══════════════════════════════════════════════════════════════
+_BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
+_dotenv_path = _BASE_DIR / ".env"
+
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=_dotenv_path)
+print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
+
+# ═══════════════════════════════════════════════════════════════
+# Inyectar DB_FILE en el entorno del sistema operativo de forma
+# persistente. Esto garantiza que cualquier módulo que lea
+# os.environ["DB_FILE"] obtenga la ruta absoluta correcta,
+# incluso si el CWD cambió (PM2, systemd, cron, etc.).
+# ═══════════════════════════════════════════════════════════════
+if not os.environ.get("DB_FILE"):
+    os.environ["DB_FILE"] = str(_BASE_DIR / "trade_history.db")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 💉 DB_FILE inyectado: {os.environ['DB_FILE']}")
+else:
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📌 DB_FILE ya existía en entorno: {os.environ['DB_FILE']}")
+
+# Ensure base directory is in python path
+sys.path.append(str(_BASE_DIR))
+
+# ── Imports estándar ──
 import asyncio
 import concurrent.futures
 import logging
@@ -9,20 +38,15 @@ import time
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Ensure base directory is in python path
-_BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
-sys.path.append(str(_BASE_DIR))
-
-# Cargar variables de entorno antes de cualquier import local
-# Usar ruta absoluta para que funcione incluso si PM2 cambia el CWD
-_dotenv_path = _BASE_DIR / ".env"
-load_dotenv(dotenv_path=_dotenv_path)
-print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
+# ── DB_FILE se lee del entorno (ya inyectado arriba) ──
+# Esta variable global se usa en health_check y otros endpoints.
+# En _init_all_modules() se re-lee de os.environ para asegurar
+# que el hilo secundario también tenga el valor correcto.
+DB_FILE = os.environ.get("DB_FILE", str(_BASE_DIR / "trade_history.db"))
 
 # ── Lazy placeholders (imports postponed to background thread) ──
 # Uvicorn MUST bind to port 8000 immediately — ALL heavy init happens in lifespan.
@@ -32,12 +56,13 @@ is_market_open = None
 BrokerClient = None
 init_db, get_trade_history = None, None
 calculate_ml_rolling_accuracy = None
-TradingBrain, DB_FILE = None, None
+TradingBrain = None
 _init_ok = False
 _init_errors = []
 _init_done = threading.Event()  # Señal de que la inicialización terminó
 
 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 Uvicorn bindeando puerto 8000 — inicialización en background...")
+print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📍 DB_FILE global: {DB_FILE}")
 
 
 def _init_all_modules():
@@ -48,6 +73,14 @@ def _init_all_modules():
     global BrokerClient, init_db, get_trade_history
     global calculate_ml_rolling_accuracy, TradingBrain, DB_FILE
     global _init_ok, _init_errors
+
+    # ═══════════════════════════════════════════════════════════
+    # RE-LECTURA EXPLÍCITA de DB_FILE desde os.environ.
+    # Esto asegura que incluso si el hilo hijo tiene un entorno
+    # diferente, usamos el valor inyectado al inicio del proceso.
+    # ═══════════════════════════════════════════════════════════
+    DB_FILE = os.environ.get("DB_FILE", str(_BASE_DIR / "trade_history.db"))
+    print(f"[INIT] 🔄 DB_FILE re-leído del entorno: {DB_FILE}")
 
     errors = []
 
@@ -88,13 +121,31 @@ def _init_all_modules():
             errors.append(f"broker: {e}")
             print(f"[INIT] ❌ broker falló: {e}")
 
-        # ── database ──
+        # ── brain (DEBE ir ANTES que database para que DB_FILE esté sincronizado) ──
+        try:
+            from core.brain import TradingBrain as TB, DB_FILE as BRAIN_DB_FILE
+            TradingBrain = TB
+            # Si brain tiene una ruta diferente y el entorno no la tenía,
+            # usamos la de brain como fuente de verdad.
+            if not os.environ.get("DB_FILE"):
+                DB_FILE = BRAIN_DB_FILE
+                os.environ["DB_FILE"] = DB_FILE
+            print(f"[INIT] ✅ brain importado (DB_FILE={BRAIN_DB_FILE}).")
+            if TradingBrain:
+                TradingBrain.initialize()
+                print(f"[INIT] ✅ TradingBrain inicializado.")
+        except Exception as e:
+            errors.append(f"brain: {e}")
+            print(f"[INIT] ❌ brain falló: {e}")
+
+        # ── database (AHORA con DB_FILE ya resuelto desde brain/entorno) ──
         try:
             from core.database import init_db as idb, get_trade_history as gth
             init_db, get_trade_history = idb, gth
             if init_db:
                 print(f"[INIT] Inicializando base de datos... (DB_FILE={DB_FILE})")
-                init_db()
+                # Pasar DB_FILE explícitamente — no depender de defaults del módulo
+                init_db(DB_FILE)
                 # Verificar que la DB se creó
                 if DB_FILE and os.path.exists(DB_FILE):
                     print(f"[INIT] ✅ database inicializada — DB existe en {DB_FILE}")
@@ -115,18 +166,6 @@ def _init_all_modules():
         except Exception as e:
             errors.append(f"ml_engine: {e}")
             print(f"[INIT] ❌ ml_engine falló: {e}")
-
-        # ── brain ──
-        try:
-            from core.brain import TradingBrain as TB, DB_FILE as DF
-            TradingBrain, DB_FILE = TB, DF
-            print(f"[INIT] ✅ brain importado (DB_FILE={DB_FILE}).")
-            if TradingBrain:
-                TradingBrain.initialize()
-                print(f"[INIT] ✅ TradingBrain inicializado.")
-        except Exception as e:
-            errors.append(f"brain: {e}")
-            print(f"[INIT] ❌ brain falló: {e}")
 
     except Exception as e:
         # Catch-all: NUNCA dejar que el hilo muera en silencio

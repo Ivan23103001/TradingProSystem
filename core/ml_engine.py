@@ -364,39 +364,34 @@ def calculate_ml_rolling_accuracy(db_path="trade_history.db", limit=15):
     Calcula la precisión real del modelo ML basándose en los resultados reales de los trades cerrados.
     Retorna la precisión rodante (0.0 a 1.0) y el peso dinámico aconsejado para el ensamble.
     """
-    import sqlite3
+    from core.database import get_connection
     if not os.path.exists(db_path):
-        return 0.50, 0.40 # Neutro, Peso estándar
-        
+        return 0.50, 0.40  # Neutro, Peso estándar
+
     try:
-        conn = sqlite3.connect(db_path)
+        conn = get_connection(db_path)
         # Traer trades cerrados donde la IA tuvo voto decisivo (score distinto a 50)
         df_trades = pd.read_sql_query(
             "SELECT pnl, score, tipo FROM trades WHERE pnl IS NOT NULL AND score != 50 ORDER BY id DESC LIMIT ?",
             conn, params=(limit,)
         )
-        conn.close()
-        
+        # No cerrar: la conexión pertenece al pool thread-local
+
         if df_trades.empty or len(df_trades) < 5:
-            # Si no hay suficientes datos históricos cerrados, regresamos peso estándar (40%)
             return 0.50, 0.40
-            
+
         # Un trade es "correcto" si dio ganancia (pnl > 0)
-        # (ya que pnl_cash se calcula positivo si la dirección fue correcta)
         correct = df_trades[df_trades['pnl'] > 0]
         accuracy = len(correct) / len(df_trades)
-        
+
         # Ajuste dinámico del peso del modelo (Auto-Adaptación del Cerebro)
         if accuracy >= 0.65:
-            # Altísima precisión reciente: aumentamos el peso de la IA al 55%
             weight = 0.55
         elif accuracy >= 0.50:
-            # Precisión normal/aceptable: peso estándar del 40%
             weight = 0.40
         else:
-            # Modelo decayendo o mercado cambiado: disminuimos el peso de la IA al 15% para proteger
             weight = 0.15
-            
+
         return accuracy, weight
     except Exception:
         return 0.50, 0.40

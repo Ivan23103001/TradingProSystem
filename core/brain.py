@@ -161,9 +161,10 @@ class TradingBrain:
         
         # Validar DB
         try:
-            conn = sqlite3.connect(DB_FILE)
+            from core.database import get_connection
+            conn = get_connection(DB_FILE)
             conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            conn.close()
+            # No cerrar: la conexión pertenece al pool thread-local
         except Exception:
             print("Error de Integridad: Base de Datos corrupta o inexistente.")
 

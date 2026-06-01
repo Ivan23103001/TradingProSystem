@@ -220,9 +220,10 @@ def calculate_kelly_criterion(db_path='trade_history.db'):
         if not os.path.exists(db_path):
             return 0.15 
             
-        conn = sqlite3.connect(db_path)
+        from .database import get_connection
+        conn = get_connection(db_path)
         df_trades = pd.read_sql_query("SELECT pnl FROM trades WHERE pnl IS NOT NULL", conn)
-        conn.close()
+        # No cerrar: la conexión pertenece al pool thread-local
         
         if len(df_trades) < 5:
             return 0.15

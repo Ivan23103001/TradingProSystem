@@ -9,6 +9,7 @@ import time
 import threading
 from datetime import datetime
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -16,6 +17,9 @@ from pydantic import BaseModel
 # Ensure base directory is in python path
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 sys.path.append(str(_BASE_DIR))
+
+# Cargar variables de entorno antes de cualquier import local
+load_dotenv()
 
 # ── Lazy placeholders (imports postponed to background thread) ──
 # Uvicorn MUST bind to port 8000 immediately — ALL heavy init happens in lifespan.
@@ -34,7 +38,8 @@ print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 Uvicorn bindeando 
 
 
 def _init_all_modules():
-    """Inicializa TODOS los módulos core en background (sin bloquear el bind de Uvicorn)."""
+    """Inicializa TODOS los módulos core en background (sin bloquear el bind de Uvicorn).
+    Ultra-resiliente: incluso un crash total de imports no congela el backend."""
     global get_stock_data, get_cache_stats
     global apply_strategy, get_spy_sentiment, is_market_open
     global BrokerClient, init_db, get_trade_history
@@ -44,61 +49,100 @@ def _init_all_modules():
     errors = []
 
     try:
-        from core.data_fetcher import get_stock_data as gsd, get_cache_stats as gcs
-        get_stock_data, get_cache_stats = gsd, gcs
-    except Exception as e:
-        errors.append(f"data_fetcher: {e}")
+        # ── data_fetcher ──
+        try:
+            from core.data_fetcher import get_stock_data as gsd, get_cache_stats as gcs
+            get_stock_data, get_cache_stats = gsd, gcs
+            print(f"[INIT] ✅ data_fetcher cargado.")
+        except Exception as e:
+            errors.append(f"data_fetcher: {e}")
+            print(f"[INIT] ❌ data_fetcher falló: {e}")
 
-    try:
-        from core.strategy import apply_strategy as ap, get_spy_sentiment as gss
-        apply_strategy, get_spy_sentiment = ap, gss
-    except Exception as e:
-        errors.append(f"strategy: {e}")
+        # ── strategy ──
+        try:
+            from core.strategy import apply_strategy as ap, get_spy_sentiment as gss
+            apply_strategy, get_spy_sentiment = ap, gss
+            print(f"[INIT] ✅ strategy cargado.")
+        except Exception as e:
+            errors.append(f"strategy: {e}")
+            print(f"[INIT] ❌ strategy falló: {e}")
 
-    try:
-        from core.simulator import is_market_open as imo
-        is_market_open = imo
-    except Exception as e:
-        errors.append(f"simulator: {e}")
+        # ── simulator ──
+        try:
+            from core.simulator import is_market_open as imo
+            is_market_open = imo
+            print(f"[INIT] ✅ simulator cargado.")
+        except Exception as e:
+            errors.append(f"simulator: {e}")
+            print(f"[INIT] ❌ simulator falló: {e}")
 
-    try:
-        from core.broker import BrokerClient as BC
-        BrokerClient = BC
-    except Exception as e:
-        errors.append(f"broker: {e}")
+        # ── broker ──
+        try:
+            from core.broker import BrokerClient as BC
+            BrokerClient = BC
+            print(f"[INIT] ✅ broker cargado.")
+        except Exception as e:
+            errors.append(f"broker: {e}")
+            print(f"[INIT] ❌ broker falló: {e}")
 
-    try:
-        from core.database import init_db as idb, get_trade_history as gth
-        init_db, get_trade_history = idb, gth
-        if init_db:
-            init_db()
-    except Exception as e:
-        errors.append(f"database: {e}")
+        # ── database ──
+        try:
+            from core.database import init_db as idb, get_trade_history as gth
+            init_db, get_trade_history = idb, gth
+            if init_db:
+                print(f"[INIT] Inicializando base de datos... (DB_FILE={DB_FILE})")
+                init_db()
+                # Verificar que la DB se creó
+                if DB_FILE and os.path.exists(DB_FILE):
+                    print(f"[INIT] ✅ database inicializada — DB existe en {DB_FILE}")
+                else:
+                    print(f"[INIT] ⚠️ database inicializada pero DB_FILE={DB_FILE} no encontrada en disco.")
+            else:
+                errors.append("database: init_db es None")
+                print(f"[INIT] ❌ database: init_db es None tras import.")
+        except Exception as e:
+            errors.append(f"database: {e}")
+            print(f"[INIT] ❌ database falló: {e}")
 
-    try:
-        from core.ml_engine import calculate_ml_rolling_accuracy as cml
-        calculate_ml_rolling_accuracy = cml
-    except Exception as e:
-        errors.append(f"ml_engine: {e}")
+        # ── ml_engine ──
+        try:
+            from core.ml_engine import calculate_ml_rolling_accuracy as cml
+            calculate_ml_rolling_accuracy = cml
+            print(f"[INIT] ✅ ml_engine cargado.")
+        except Exception as e:
+            errors.append(f"ml_engine: {e}")
+            print(f"[INIT] ❌ ml_engine falló: {e}")
 
-    try:
-        from core.brain import TradingBrain as TB, DB_FILE as DF
-        TradingBrain, DB_FILE = TB, DF
-        if TradingBrain:
-            TradingBrain.initialize()
-    except Exception as e:
-        errors.append(f"brain: {e}")
+        # ── brain ──
+        try:
+            from core.brain import TradingBrain as TB, DB_FILE as DF
+            TradingBrain, DB_FILE = TB, DF
+            print(f"[INIT] ✅ brain importado (DB_FILE={DB_FILE}).")
+            if TradingBrain:
+                TradingBrain.initialize()
+                print(f"[INIT] ✅ TradingBrain inicializado.")
+        except Exception as e:
+            errors.append(f"brain: {e}")
+            print(f"[INIT] ❌ brain falló: {e}")
 
+    except Exception as e:
+        # Catch-all: NUNCA dejar que el hilo muera en silencio
+        errors.append(f"CRITICAL_UNHANDLED: {e}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🔥🔥🔥 CRITICAL INIT ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # ── SIEMPRE marcamos como terminado (aunque haya errores) ──
     if errors:
         _init_ok = False
         _init_errors = errors
         msg = " | ".join(errors)
         logging.error(f"Errores durante inicialización: {msg}")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — algunos endpoints operarán en modo contingencia. Errores: {msg}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — {len(errors)} módulo(s) con error. Uvicorn sigue activo.")
     else:
         _init_ok = True
         _init_errors = []
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Backend inicializado correctamente.")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Backend inicializado correctamente — {7} módulos cargados.")
 
     _init_done.set()
 

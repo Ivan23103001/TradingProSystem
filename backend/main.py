@@ -1,6 +1,7 @@
 import sys
 import os
 import pathlib
+from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════════
 # PRIMERÍSIMO: cargar variables de entorno desde .env
@@ -36,7 +37,6 @@ import logging
 import requests
 import time
 import threading
-from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware

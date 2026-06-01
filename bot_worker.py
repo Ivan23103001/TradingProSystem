@@ -475,7 +475,8 @@ def main():
                                 t, side,
                                 take_profit_price=tp_price,
                                 stop_loss_price=sl_price,
-                                notional=final_trade_amount
+                                notional=final_trade_amount,
+                                current_price=price
                             )
 
                             if ok:

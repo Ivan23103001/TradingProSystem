@@ -149,7 +149,7 @@ class BrokerClient:
     # EJECUCIÓN DE TRADES CON PROTECCIÓN INTELIGENTE
     # =========================================================================
 
-    def execute_trade(self, symbol, side, qty=None, notional=None, take_profit_price=None, stop_loss_price=None):
+    def execute_trade(self, symbol, side, qty=None, notional=None, take_profit_price=None, stop_loss_price=None, current_price=None):
         """
         Envía una orden al mercado con protección inteligente de SL/TP.
 
@@ -158,6 +158,10 @@ class BrokerClient:
           - Si notional + SL/TP: convierte a qty (si >= 1 acción) para usar bracket.
           - Si qty < 1: coloca orden simple y retorna has_bracket=False para que
             el bot_worker monitoree la posición en software.
+
+        Args:
+            current_price: Precio de mercado actual (último Close). Si es None,
+                           se estima del promedio SL+TP como fallback legacy.
 
         Returns:
             (success: bool, message: str, has_bracket: bool)
@@ -186,10 +190,11 @@ class BrokerClient:
                 has_bracket = False
 
                 if wants_bracket:
+                    # Usar precio de mercado real si está disponible; fallback al promedio SL/TP
+                    ref_price = current_price if current_price and current_price > 0 else ((take_profit_price + stop_loss_price) / 2)
                     # Intentar convertir notional → qty para usar bracket
                     try:
-                        estimated_price = (take_profit_price + stop_loss_price) / 2
-                        estimated_qty = math.floor(notional / estimated_price)
+                        estimated_qty = math.floor(notional / ref_price)
 
                         if estimated_qty >= 1:
                             # Suficiente para al menos 1 acción: usar BRACKET

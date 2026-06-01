@@ -53,6 +53,57 @@ def _sign_data(data: bytes) -> str:
 _warned_missing_sig = False
 _confirmado_firma_ok = False
 
+# --- Caché en memoria del modelo ML (evita I/O en cada predicción) ---
+# El modelo y sus componentes solo se cargan UNA VEZ por sesión del proceso.
+# Se invalida automáticamente tras reentrenamiento (train_trading_model).
+_cached_model = None
+
+
+def invalidate_model_cache():
+    """
+    Invalida el caché del modelo ML para forzar una recarga en la siguiente predicción.
+    Llamado por train_trading_model() tras guardar un nuevo modelo en disco.
+    """
+    global _cached_model
+    _cached_model = None
+    logging.info("🔄 Caché de modelo ML invalidado — se recargará en la próxima predicción.")
+
+
+def _load_model_into_cache():
+    """
+    Carga y verifica el modelo ML una sola vez, guardándolo en _cached_model.
+    Retorna el dict del modelo o None si la carga/verificación falla.
+    """
+    global _cached_model
+    if _cached_model is not None:
+        return _cached_model
+
+    if not os.path.exists(MODEL_PATH):
+        logging.warning("Modelo ML no encontrado en disco.")
+        return None
+
+    if not _verify_integrity(MODEL_PATH):
+        logging.error("[!] Modelo ML rechazado por fallo de integridad (firma HMAC inválida).")
+        return None
+
+    try:
+        _cached_model = joblib.load(MODEL_PATH)
+        logging.info(f"✅ Modelo ML cargado en memoria (features: {len(_cached_model.get('features', []))})")
+
+        # Verificar coincidencia de versión de sklearn (solo se emite en la carga inicial)
+        if isinstance(_cached_model, dict):
+            saved_ver = _cached_model.get('sklearn_version', 'unknown')
+            if saved_ver != 'unknown' and saved_ver != sklearn.__version__:
+                logging.warning(
+                    f"[!] Modelo ML entrenado con sklearn {saved_ver}, "
+                    f"pero la versión actual es {sklearn.__version__}"
+                )
+
+        return _cached_model
+    except Exception as e:
+        logging.error(f"Error cargando modelo ML: {e}")
+        return None
+
 
 def _verify_integrity(model_path=None):
     """
@@ -239,27 +290,24 @@ def train_trading_model(df, n_estimators=150, max_depth=12, bars_forward=3, min_
         with open(MODEL_SIG_PATH, "w") as f:
             f.write(signature)
         logging.info(f"🔐 Modelo ML firmado (HMAC-SHA256) → {MODEL_SIG_PATH}")
+
+        # Invalidar caché en memoria para que la siguiente predicción use el nuevo modelo
+        invalidate_model_cache()
         
         return accuracy, f"Entrenamiento exitoso (Accuracy Ensamble: {accuracy:.1%}, Features: {len(feature_names)})"
     except Exception as e:
         return None, str(e)
 
 def get_ml_prediction(df):
+    """
+    Predicción del modelo ML usando caché en memoria.
+    El modelo se carga de disco solo UNA VEZ por sesión del proceso.
+    """
     try:
-        if not os.path.exists(MODEL_PATH): return 50
-        
-        # Verificar integridad del modelo antes de cargar (anti-manipulación pickle)
-        if not _verify_integrity(MODEL_PATH):
-            logging.error("[!] Modelo ML rechazado por fallo de integridad (firma HMAC inválida).")
+        # Usar el caché en memoria (carga + verificación HMAC solo en la primera llamada)
+        saved = _load_model_into_cache()
+        if saved is None:
             return 50
-        
-        saved = joblib.load(MODEL_PATH)
-        
-        # Verificar coincidencia de versión de sklearn
-        if isinstance(saved, dict):
-            saved_ver = saved.get('sklearn_version', 'unknown')
-            if saved_ver != 'unknown' and saved_ver != sklearn.__version__:
-                logging.warning(f"[!] Modelo ML entrenado con sklearn {saved_ver}, pero la versión actual es {sklearn.__version__}")
         
         # Soporte para retrocompatibilidad con el modelo anterior (legacy sin ensamble)
         if isinstance(saved, dict) and 'rf_model' not in saved:
@@ -280,7 +328,7 @@ def get_ml_prediction(df):
                 if 1 in classes: return int(probs[classes.index(1)] * 100)
             return 50
             
-        # Inferencia con el nuevo Ensamble robusto (RF + GB)
+        # Inferencia con el nuevo Ensamble robusto (RF + GB) — desde caché
         rf_model = saved['rf_model']
         gb_model = saved['gb_model']
         scaler = saved['scaler']

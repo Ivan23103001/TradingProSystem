@@ -17,77 +17,101 @@ from pydantic import BaseModel
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 sys.path.append(str(_BASE_DIR))
 
-# ── Resilient core imports (backend NEVER crashes during startup) ──
-# Todos los imports de core se envuelven en try-except para garantizar
-# que Uvicorn siempre levante, incluso con DB corrupta o modelo inválido.
-
-_init_ok = True
+# ── Lazy placeholders (imports postponed to background thread) ──
+# Uvicorn MUST bind to port 8000 immediately — ALL heavy init happens in lifespan.
+get_stock_data, get_cache_stats = None, None
+apply_strategy, get_spy_sentiment = None, None
+is_market_open = None
+BrokerClient = None
+init_db, get_trade_history = None, None
+calculate_ml_rolling_accuracy = None
+TradingBrain, DB_FILE = None, None
+_init_ok = False
 _init_errors = []
+_init_done = threading.Event()  # Señal de que la inicialización terminó
 
-try:
-    from core.data_fetcher import get_stock_data, get_cache_stats
-except Exception as e:
-    get_stock_data, get_cache_stats = None, None
-    _init_errors.append(f"data_fetcher: {e}")
+print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 Uvicorn bindeando puerto 8000 — inicialización en background...")
 
-try:
-    from core.strategy import apply_strategy, get_spy_sentiment
-except Exception as e:
-    apply_strategy, get_spy_sentiment = None, None
-    _init_errors.append(f"strategy: {e}")
 
-try:
-    from core.simulator import is_market_open
-except Exception as e:
-    is_market_open = None
-    _init_errors.append(f"simulator: {e}")
+def _init_all_modules():
+    """Inicializa TODOS los módulos core en background (sin bloquear el bind de Uvicorn)."""
+    global get_stock_data, get_cache_stats
+    global apply_strategy, get_spy_sentiment, is_market_open
+    global BrokerClient, init_db, get_trade_history
+    global calculate_ml_rolling_accuracy, TradingBrain, DB_FILE
+    global _init_ok, _init_errors
 
-try:
-    from core.broker import BrokerClient
-except Exception as e:
-    BrokerClient = None
-    _init_errors.append(f"broker: {e}")
+    errors = []
 
-try:
-    from core.database import init_db, get_trade_history
-except Exception as e:
-    init_db, get_trade_history = None, None
-    _init_errors.append(f"database: {e}")
-
-try:
-    from core.ml_engine import calculate_ml_rolling_accuracy
-except Exception as e:
-    calculate_ml_rolling_accuracy = None
-    _init_errors.append(f"ml_engine: {e}")
-
-try:
-    from core.brain import TradingBrain, DB_FILE
-
-    # Initialize database and brain
     try:
+        from core.data_fetcher import get_stock_data as gsd, get_cache_stats as gcs
+        get_stock_data, get_cache_stats = gsd, gcs
+    except Exception as e:
+        errors.append(f"data_fetcher: {e}")
+
+    try:
+        from core.strategy import apply_strategy as ap, get_spy_sentiment as gss
+        apply_strategy, get_spy_sentiment = ap, gss
+    except Exception as e:
+        errors.append(f"strategy: {e}")
+
+    try:
+        from core.simulator import is_market_open as imo
+        is_market_open = imo
+    except Exception as e:
+        errors.append(f"simulator: {e}")
+
+    try:
+        from core.broker import BrokerClient as BC
+        BrokerClient = BC
+    except Exception as e:
+        errors.append(f"broker: {e}")
+
+    try:
+        from core.database import init_db as idb, get_trade_history as gth
+        init_db, get_trade_history = idb, gth
         if init_db:
             init_db()
+    except Exception as e:
+        errors.append(f"database: {e}")
+
+    try:
+        from core.ml_engine import calculate_ml_rolling_accuracy as cml
+        calculate_ml_rolling_accuracy = cml
+    except Exception as e:
+        errors.append(f"ml_engine: {e}")
+
+    try:
+        from core.brain import TradingBrain as TB, DB_FILE as DF
+        TradingBrain, DB_FILE = TB, DF
         if TradingBrain:
             TradingBrain.initialize()
     except Exception as e:
-        _init_errors.append(f"inicialización DB/Brain: {e}")
-except Exception as e:
-    TradingBrain, DB_FILE = None, None
-    _init_errors.append(f"brain: {e}")
+        errors.append(f"brain: {e}")
 
-if _init_errors:
-    _init_ok = False
-    msg = " | ".join(_init_errors)
-    logging.error(f"Errores durante inicialización: {msg}")
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — la API REST arrancará en modo contingencia. Errores: {msg}")
-else:
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Backend inicializado correctamente.")
+    if errors:
+        _init_ok = False
+        _init_errors = errors
+        msg = " | ".join(errors)
+        logging.error(f"Errores durante inicialización: {msg}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — algunos endpoints operarán en modo contingencia. Errores: {msg}")
+    else:
+        _init_ok = True
+        _init_errors = []
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Backend inicializado correctamente.")
+
+    _init_done.set()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global executor
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=30)
     logging.info("ThreadPoolExecutor iniciado (30 workers).")
+
+    # Lanzar inicialización en background thread — NO bloquea el bind de Uvicorn
+    threading.Thread(target=_init_all_modules, name="backend-init", daemon=True).start()
+
     yield
     logging.info("Shutting down ThreadPoolExecutor...")
     executor.shutdown(wait=True)

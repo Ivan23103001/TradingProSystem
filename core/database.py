@@ -68,10 +68,18 @@ def init_db(db_path=None):
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_fecha ON trades(fecha)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_equity_fecha ON equity_history(fecha)''')
         conn.commit()
+        logging.info("✅ Base de datos inicializada: tablas trades y equity_history listas.")
     except Exception as e:
         logging.error(f"Error inicializando DB: {e}")
-    finally:
-        conn.close()
+        # Si falla la inicialización, remover la conexión dañada del pool
+        path = db_path or DB_NAME
+        pool = getattr(_tls, 'conn_pool', None)
+        if pool and path in pool:
+            try:
+                pool[path].close()
+            except Exception:
+                pass
+            del pool[path]
 
 
 def save_trade(ticker, tipo, precio, cantidad, score, db_path=None):

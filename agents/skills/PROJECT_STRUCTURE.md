@@ -60,7 +60,9 @@ TradingProSystem/
 ### 2. Gestión de Datos (`core/database.py`)
 - **Rol:** Centraliza el acceso a SQLite. Habilita el modo WAL (Write-Ahead Logging) y timeouts elevados (15s) para permitir lecturas y escrituras seguras concurrentes.
 - **v5.1 — Pool Thread-Local:** `get_connection()` ahora reutiliza una conexión persistente por hilo mediante `threading.local()`. Las funciones `save_trade`, `save_equity`, `get_trade_history`, `get_equity_history`, `update_last_trade_pnl` y `archive_old_trades` **no cierran** la conexión tras su uso. Queda prohibido llamar a `conn.close()` manualmente en código que use este módulo.
+- **v5.2 — Inicialización Obligatoria de Tablas:** Todo proceso que use la base de datos DEBE llamar a `init_db()` al inicio antes de cualquier operación de lectura/escritura. `init_db()` crea automáticamente las tablas `trades` y `equity_history` con sus índices si no existen. Si la BD está corrupta (`database disk image is malformed`), se debe eliminar el archivo `trade_history.db` junto con sus auxiliares WAL (`-wal`, `-shm`) y reiniciar el proceso para que `init_db()` la regenere limpia. `init_db()` NO cierra la conexión — la mantiene en el pool thread-local para que las operaciones subsiguientes reutilicen la misma conexión viva.
 - **Flujo:** 
+  - `bot_worker.py` y `backend/main.py` llaman a `init_db()` en su arranque.
   - `bot_worker.py` escribe trades y equity.
   - `backend/main.py` y `telegram_listener.py` leen el historial.
   - Todos comparten la misma pool thread-local sin contención de apertura/cierre.

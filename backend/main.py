@@ -19,7 +19,10 @@ _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 sys.path.append(str(_BASE_DIR))
 
 # Cargar variables de entorno antes de cualquier import local
-load_dotenv()
+# Usar ruta absoluta para que funcione incluso si PM2 cambia el CWD
+_dotenv_path = _BASE_DIR / ".env"
+load_dotenv(dotenv_path=_dotenv_path)
+print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
 
 # ── Lazy placeholders (imports postponed to background thread) ──
 # Uvicorn MUST bind to port 8000 immediately — ALL heavy init happens in lifespan.

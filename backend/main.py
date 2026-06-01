@@ -609,6 +609,15 @@ def get_system_status_endpoint():
         except Exception:
             pass
 
+        # Estado del broker (degraded flag del circuit breaker de API)
+        broker_degraded = False
+        try:
+            bcc = get_broker_client()
+            if bcc:
+                broker_degraded = bcc.degraded
+        except Exception:
+            pass
+
         return {
             "market_open": m_open,
             "market_msg": m_msg,
@@ -620,7 +629,8 @@ def get_system_status_endpoint():
             "ai_adaptative_label": wt_label,
             "cache_label": f"{cache_stats['total_entries']} entradas ({cache_stats['fresh']} frescas, {cache_stats['stale']} expiradas)",
             "worker_uptime": worker_uptime,
-            "worker_connected": worker_connected
+            "worker_connected": worker_connected,
+            "broker_degraded": broker_degraded
         }
     except Exception as e:
         return {"error": str(e)}

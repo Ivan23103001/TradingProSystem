@@ -2,6 +2,9 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 import math
+import time
+import random
+import logging
 
 
 class BrokerClient:
@@ -11,6 +14,9 @@ class BrokerClient:
         paper=True = Dinero Falso (Paper Trading).
         paper=False = Dinero Real (Live Trading).
         """
+        self.degraded = False          # Flag de estado degradado (expuesto al frontend)
+        self._consecutive_failures = 0
+        self._last_failure_time = 0.0
         try:
             self.client = TradingClient(api_key, secret_key, paper=paper)
             self.account = self.client.get_account()
@@ -21,6 +27,65 @@ class BrokerClient:
 
     def is_connected(self):
         return self.connected
+
+    # =========================================================================
+    # EXPONENTIAL BACKOFF + JITTER para todas las llamadas críticas a Alpaca
+    # =========================================================================
+
+    def _safe_api_call(self, func, *args, **kwargs):
+        """
+        Envuelve una llamada a la API de Alpaca con exponential backoff + jitter.
+        - Hasta 3 reintentos con delay: 2s, 4s, 8s (+ jitter aleatorio 0-1s).
+        - Detecta HTTP 429 (Rate Limit) y usa Retry-After si está disponible.
+        - Tras 2 fallos consecutivos, activa self.degraded = True.
+        - Si la llamada tiene éxito tras reintentos, resetea el flag degraded.
+        """
+        max_retries = 3
+        base_delay = 2.0
+
+        for attempt in range(max_retries):
+            try:
+                result = func(*args, **kwargs)
+                # Éxito: resetear estado degradado si hubo reintentos previos
+                if attempt > 0:
+                    self._consecutive_failures = 0
+                    self.degraded = False
+                    logging.info(f"✅ Alpaca API recuperada tras {attempt} reintentos.")
+                elif self._consecutive_failures > 0:
+                    # Éxito al primer intento después de fallos anteriores
+                    self._consecutive_failures = 0
+                    self.degraded = False
+                return result
+            except Exception as e:
+                err_str = str(e)
+                is_rate_limit = '429' in err_str or 'rate limit' in err_str.lower()
+
+                if attempt == max_retries - 1:
+                    self._consecutive_failures += 1
+                    if self._consecutive_failures >= 2:
+                        self.degraded = True
+                        logging.error(
+                            f"🚨 Alpaca DEGRADADO tras {self._consecutive_failures} "
+                            f"fallos consecutivos: {e}"
+                        )
+                    raise
+
+                # Calcular delay con jitter
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                if is_rate_limit:
+                    delay = max(delay, 30.0)  # Mínimo 30s para rate limits
+                logging.warning(
+                    f"⚠️ Alpaca API fallo (intento {attempt+1}/{max_retries}), "
+                    f"reintentando en {delay:.1f}s: {e}"
+                )
+                time.sleep(delay)
+
+        raise RuntimeError("Unreachable: _safe_api_call")
+
+    def _reset_degraded(self):
+        """Resetea manualmente el flag de estado degradado."""
+        self.degraded = False
+        self._consecutive_failures = 0
 
     def get_account_info(self):
         """Obtiene info de la cuenta con datos actualizados."""

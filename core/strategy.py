@@ -169,24 +169,43 @@ def get_macro_regime():
 def calculate_volume_profile(df, lookback=50):
     """
     Calcula dinámicamente el Point of Control (POC) local del Volume Profile.
-    v5.1: Vectorizado con rolling apply — sin loops for (cumple SMC_TECHNICAL_LOGIC.md).
+    v5.2: Usa raw=True con arrays numpy para máxima compatibilidad entre versiones de pandas.
+    Encuentra el precio con mayor volumen acumulado en cada ventana móvil.
     """
-    price_bins = df['Close'].round(2)
+    import numpy as np
     
-    def _poc_of_window(window_close, window_vol):
-        """Encuentra el precio con mayor volumen acumulado en una ventana."""
-        profile = window_vol.groupby(window_close).sum()
-        return profile.idxmax() if len(profile) > 0 else window_close.iloc[-1]
+    # Construir un DataFrame auxiliar con las dos columnas necesarias para el rolling
+    aux = pd.DataFrame({
+        'pb': df['Close'].round(2).values,
+        'vol': df['Volume'].values
+    }, index=df.index)
     
-    # Usamos rolling().apply() completamente vectorizado en pandas
-    poc_series = (
-        pd.DataFrame({'price_bin': price_bins, 'volume': df['Volume']})
-        .rolling(window=lookback, min_periods=lookback)
-        .apply(lambda w: _poc_of_window(w['price_bin'], w['volume']), raw=False)
-        ['price_bin']
+    def _poc_of_window(arr):
+        """
+        Encuentra el precio con mayor volumen acumulado en una ventana.
+        arr: ndarray de shape (lookback, 2) donde col 0 = price_bin, col 1 = volume.
+        """
+        prices = arr[:, 0]
+        vols = arr[:, 1]
+        unique_p = np.unique(prices)
+        if len(unique_p) == 0:
+            return float(prices[-1])
+        best_price = float(prices[-1])
+        best_vol = -1.0
+        for p in unique_p:
+            total_vol = vols[prices == p].sum()
+            if total_vol > best_vol:
+                best_vol = total_vol
+                best_price = float(p)
+        return best_price
+    
+    # rolling().apply(raw=True) pasa un ndarray 2D a la función — siempre compatible
+    poc_df = aux.rolling(window=lookback, min_periods=lookback).apply(
+        _poc_of_window, raw=True
     )
     
-    df['POC'] = poc_series.ffill().fillna(df['Close'])
+    # Tomar la columna 'pb' del resultado y rellenar
+    df['POC'] = poc_df['pb'].ffill().fillna(df['Close'])
     return df
 
 def calculate_kelly_criterion(db_path='trade_history.db'):

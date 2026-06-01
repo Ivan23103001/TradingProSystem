@@ -17,21 +17,71 @@ from pydantic import BaseModel
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 sys.path.append(str(_BASE_DIR))
 
-from core.data_fetcher import get_stock_data, get_cache_stats
-from core.strategy import apply_strategy, get_spy_sentiment
-from core.simulator import is_market_open
-from core.broker import BrokerClient
-from core.database import init_db, get_trade_history
-from core.ml_engine import calculate_ml_rolling_accuracy
-from core.brain import TradingBrain, DB_FILE
+# ── Resilient core imports (backend NEVER crashes during startup) ──
+# Todos los imports de core se envuelven en try-except para garantizar
+# que Uvicorn siempre levante, incluso con DB corrupta o modelo inválido.
 
-# Initialize database and brain (safe wrapper — backend NEVER crashes during import)
+_init_ok = True
+_init_errors = []
+
 try:
-    init_db()
-    TradingBrain.initialize()
+    from core.data_fetcher import get_stock_data, get_cache_stats
 except Exception as e:
-    logging.error(f"Error durante inicialización (DB/Brain): {e}")
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — la API REST arrancará en modo contingencia.")
+    get_stock_data, get_cache_stats = None, None
+    _init_errors.append(f"data_fetcher: {e}")
+
+try:
+    from core.strategy import apply_strategy, get_spy_sentiment
+except Exception as e:
+    apply_strategy, get_spy_sentiment = None, None
+    _init_errors.append(f"strategy: {e}")
+
+try:
+    from core.simulator import is_market_open
+except Exception as e:
+    is_market_open = None
+    _init_errors.append(f"simulator: {e}")
+
+try:
+    from core.broker import BrokerClient
+except Exception as e:
+    BrokerClient = None
+    _init_errors.append(f"broker: {e}")
+
+try:
+    from core.database import init_db, get_trade_history
+except Exception as e:
+    init_db, get_trade_history = None, None
+    _init_errors.append(f"database: {e}")
+
+try:
+    from core.ml_engine import calculate_ml_rolling_accuracy
+except Exception as e:
+    calculate_ml_rolling_accuracy = None
+    _init_errors.append(f"ml_engine: {e}")
+
+try:
+    from core.brain import TradingBrain, DB_FILE
+
+    # Initialize database and brain
+    try:
+        if init_db:
+            init_db()
+        if TradingBrain:
+            TradingBrain.initialize()
+    except Exception as e:
+        _init_errors.append(f"inicialización DB/Brain: {e}")
+except Exception as e:
+    TradingBrain, DB_FILE = None, None
+    _init_errors.append(f"brain: {e}")
+
+if _init_errors:
+    _init_ok = False
+    msg = " | ".join(_init_errors)
+    logging.error(f"Errores durante inicialización: {msg}")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — la API REST arrancará en modo contingencia. Errores: {msg}")
+else:
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Backend inicializado correctamente.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,10 +99,11 @@ app = FastAPI(title="TradingProSystem API v5.0", lifespan=lifespan)
 # Lee API_KEY desde bot_config.json; si no existe, genera una por defecto
 def _load_api_key():
     try:
-        config = TradingBrain.get_runtime_config()
-        key = config.get("api_key", "")
-        if key and len(key) >= 8:
-            return key
+        if TradingBrain is not None:
+            config = TradingBrain.get_runtime_config()
+            key = config.get("api_key", "")
+            if key and len(key) >= 8:
+                return key
     except Exception:
         pass
     # Generar clave por defecto si no existe en config
@@ -152,10 +203,18 @@ class ConfigUpdate(BaseModel):
 
 @app.get("/api/health")
 def health_check():
+    db_ok = False
+    try:
+        if DB_FILE is not None:
+            db_ok = os.path.exists(DB_FILE)
+    except Exception:
+        pass
     return {
         "status": "ok",
         "time": datetime.now().isoformat(),
-        "database_connected": os.path.exists(DB_FILE)
+        "database_connected": db_ok,
+        "init_ok": _init_ok,
+        "init_errors": _init_errors if not _init_ok else None
     }
 
 @app.get("/api/config")

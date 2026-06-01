@@ -67,9 +67,9 @@ def _verify_integrity(model_path=None):
         return False
 
     if not os.path.exists(sig_path):
-        # Modelo legacy sin firma — advertir una sola vez y generar la firma ahora
+        # Modelo legacy sin firma — advertir una sola vez en debug, generar firma si es posible
         if not _warned_missing_sig:
-            logging.warning(f"[!] Sin firma para {pkl_path} — generando firma HMAC automáticamente.")
+            logging.debug(f"[!] Sin firma para {pkl_path} — generando firma HMAC automáticamente.")
             _warned_missing_sig = True
         try:
             with open(pkl_path, "rb") as f:
@@ -79,7 +79,7 @@ def _verify_integrity(model_path=None):
                 f.write(signature)
             logging.info(f"🔐 Firma HMAC generada para modelo legacy → {sig_path}")
         except Exception as e:
-            logging.error(f"No se pudo generar firma para {pkl_path}: {e}")
+            logging.debug(f"No se pudo generar firma para {pkl_path}: {e}")
         return True  # Permitir carga (no había firma previa que validar)
 
     with open(pkl_path, "rb") as f:

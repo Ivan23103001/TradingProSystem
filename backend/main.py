@@ -502,6 +502,10 @@ async def get_chart_data(ticker: str = "SPY", interval: str = "15m", period: str
     try:
         import asyncio as _asyncio
 
+        # Guard contra inicialización lazy: si los módulos aún no cargaron, devolver error claro
+        if get_spy_sentiment is None or get_stock_data is None or apply_strategy is None:
+            raise HTTPException(status_code=503, detail="Backend inicializando — intente en unos segundos.")
+
         spy_sentiment = get_spy_sentiment()
         df = get_stock_data(ticker, period=period, interval=interval)
         if df.empty or len(df) < 14:

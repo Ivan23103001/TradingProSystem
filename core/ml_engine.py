@@ -49,18 +49,39 @@ def _sign_data(data: bytes) -> str:
     """Genera firma HMAC-SHA256 de los datos serializados."""
     return hmac.new(_SIGNING_KEY, data, hashlib.sha256).hexdigest()
 
+# Flag global para evitar spam de advertencias de firma (solo se emite una vez por sesión)
+_warned_missing_sig = False
+
+
 def _verify_integrity(model_path=None):
     """
     Verifica que el archivo .pkl no haya sido manipulado usando su firma HMAC.
-    Retorna True si la firma es válida, False si hay manipulación o falta firma.
+    Si el modelo no tiene firma, la genera automáticamente para evitar warnings repetitivos.
+    Retorna False solo si hay manipulación detectada (firma existente pero inválida).
     """
+    global _warned_missing_sig
     pkl_path = model_path or MODEL_PATH
     sig_path = pkl_path + ".sig"
+
     if not os.path.exists(pkl_path):
         return False
+
     if not os.path.exists(sig_path):
-        logging.warning(f"[!] Sin firma para {pkl_path} — posible archivo legacy sin proteger.")
-        return True  # Permitir carga de modelos legacy sin firma (no romper compatibilidad)
+        # Modelo legacy sin firma — advertir una sola vez y generar la firma ahora
+        if not _warned_missing_sig:
+            logging.warning(f"[!] Sin firma para {pkl_path} — generando firma HMAC automáticamente.")
+            _warned_missing_sig = True
+        try:
+            with open(pkl_path, "rb") as f:
+                raw = f.read()
+            signature = _sign_data(raw)
+            with open(sig_path, "w") as f:
+                f.write(signature)
+            logging.info(f"🔐 Firma HMAC generada para modelo legacy → {sig_path}")
+        except Exception as e:
+            logging.error(f"No se pudo generar firma para {pkl_path}: {e}")
+        return True  # Permitir carga (no había firma previa que validar)
+
     with open(pkl_path, "rb") as f:
         raw = f.read()
     with open(sig_path, "r") as f:

@@ -169,43 +169,46 @@ def get_macro_regime():
 def calculate_volume_profile(df, lookback=50):
     """
     Calcula dinámicamente el Point of Control (POC) local del Volume Profile.
-    v5.2: Usa raw=True con arrays numpy para máxima compatibilidad entre versiones de pandas.
+    v5.3: Usa sliding_window_view de numpy — evita rolling().apply() por completo,
+    eliminando incompatibilidades de dimensión entre versiones de pandas.
     Encuentra el precio con mayor volumen acumulado en cada ventana móvil.
     """
     import numpy as np
-    
-    # Construir un DataFrame auxiliar con las dos columnas necesarias para el rolling
-    aux = pd.DataFrame({
-        'pb': df['Close'].round(2).values,
-        'vol': df['Volume'].values
-    }, index=df.index)
-    
-    def _poc_of_window(arr):
-        """
-        Encuentra el precio con mayor volumen acumulado en una ventana.
-        arr: ndarray de shape (lookback, 2) donde col 0 = price_bin, col 1 = volume.
-        """
-        prices = arr[:, 0]
-        vols = arr[:, 1]
-        unique_p = np.unique(prices)
-        if len(unique_p) == 0:
-            return float(prices[-1])
-        best_price = float(prices[-1])
+    from numpy.lib.stride_tricks import sliding_window_view
+
+    closes = df['Close'].round(2).values
+    volumes = df['Volume'].values
+    n = len(closes)
+
+    if n < lookback:
+        df['POC'] = df['Close']
+        return df
+
+    # Ventanas deslizantes vectorizadas: (n - lookback + 1, lookback)
+    price_windows = sliding_window_view(closes, lookback)
+    vol_windows = sliding_window_view(volumes, lookback)
+
+    poc_values = np.full(n, np.nan)
+
+    for i in range(len(price_windows)):
+        win_prices = price_windows[i]
+        win_vols = vol_windows[i]
+
+        # Precio con mayor volumen acumulado en la ventana
+        unique_p = np.unique(win_prices)
+        best_price = float(win_prices[-1])
         best_vol = -1.0
         for p in unique_p:
-            total_vol = vols[prices == p].sum()
+            total_vol = win_vols[win_prices == p].sum()
             if total_vol > best_vol:
                 best_vol = total_vol
                 best_price = float(p)
-        return best_price
-    
-    # rolling().apply(raw=True) pasa un ndarray 2D a la función — siempre compatible
-    poc_df = aux.rolling(window=lookback, min_periods=lookback).apply(
-        _poc_of_window, raw=True
-    )
-    
-    # Tomar la columna 'pb' del resultado y rellenar
-    df['POC'] = poc_df['pb'].ffill().fillna(df['Close'])
+
+        poc_values[lookback - 1 + i] = best_price
+
+    # Construir Series y forward-fill los NaN iniciales
+    poc_series = pd.Series(poc_values, index=df.index).ffill().fillna(df['Close'])
+    df['POC'] = poc_series
     return df
 
 def calculate_kelly_criterion(db_path='trade_history.db'):

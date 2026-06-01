@@ -10,6 +10,7 @@ import os
 import logging
 import hashlib
 import hmac
+import threading
 
 # Directorio raíz del proyecto (resuelto desde la ubicación de este archivo)
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
@@ -57,15 +58,18 @@ _confirmado_firma_ok = False
 # El modelo y sus componentes solo se cargan UNA VEZ por sesión del proceso.
 # Se invalida automáticamente tras reentrenamiento (train_trading_model).
 _cached_model = None
+_cache_lock = threading.Lock()
 
 
 def invalidate_model_cache():
     """
     Invalida el caché del modelo ML para forzar una recarga en la siguiente predicción.
     Llamado por train_trading_model() tras guardar un nuevo modelo en disco.
+    Thread-safe: adquiere el lock antes de modificar _cached_model.
     """
     global _cached_model
-    _cached_model = None
+    with _cache_lock:
+        _cached_model = None
     logging.info("🔄 Caché de modelo ML invalidado — se recargará en la próxima predicción.")
 
 
@@ -73,36 +77,45 @@ def _load_model_into_cache():
     """
     Carga y verifica el modelo ML una sola vez, guardándolo en _cached_model.
     Retorna el dict del modelo o None si la carga/verificación falla.
+    Usa Double-Checked Locking para evitar que múltiples hilos carguen
+    simultáneamente el modelo desde disco durante el primer ciclo de escaneo.
     """
     global _cached_model
+
+    # Primer check sin lock (fast path para el 99.9% de las llamadas)
     if _cached_model is not None:
         return _cached_model
 
-    if not os.path.exists(MODEL_PATH):
-        logging.warning("Modelo ML no encontrado en disco.")
-        return None
+    # Segundo check con lock (solo el primer hilo que llega carga el modelo)
+    with _cache_lock:
+        if _cached_model is not None:
+            return _cached_model
 
-    if not _verify_integrity(MODEL_PATH):
-        logging.error("[!] Modelo ML rechazado por fallo de integridad (firma HMAC inválida).")
-        return None
+        if not os.path.exists(MODEL_PATH):
+            logging.warning("Modelo ML no encontrado en disco.")
+            return None
 
-    try:
-        _cached_model = joblib.load(MODEL_PATH)
-        logging.info(f"✅ Modelo ML cargado en memoria (features: {len(_cached_model.get('features', []))})")
+        if not _verify_integrity(MODEL_PATH):
+            logging.error("[!] Modelo ML rechazado por fallo de integridad (firma HMAC inválida).")
+            return None
 
-        # Verificar coincidencia de versión de sklearn (solo se emite en la carga inicial)
-        if isinstance(_cached_model, dict):
-            saved_ver = _cached_model.get('sklearn_version', 'unknown')
-            if saved_ver != 'unknown' and saved_ver != sklearn.__version__:
-                logging.warning(
-                    f"[!] Modelo ML entrenado con sklearn {saved_ver}, "
-                    f"pero la versión actual es {sklearn.__version__}"
-                )
+        try:
+            _cached_model = joblib.load(MODEL_PATH)
+            logging.info(f"✅ Modelo ML cargado en memoria (features: {len(_cached_model.get('features', []))})")
 
-        return _cached_model
-    except Exception as e:
-        logging.error(f"Error cargando modelo ML: {e}")
-        return None
+            # Verificar coincidencia de versión de sklearn (solo se emite en la carga inicial)
+            if isinstance(_cached_model, dict):
+                saved_ver = _cached_model.get('sklearn_version', 'unknown')
+                if saved_ver != 'unknown' and saved_ver != sklearn.__version__:
+                    logging.warning(
+                        f"[!] Modelo ML entrenado con sklearn {saved_ver}, "
+                        f"pero la versión actual es {sklearn.__version__}"
+                    )
+
+            return _cached_model
+        except Exception as e:
+            logging.error(f"Error cargando modelo ML: {e}")
+            return None
 
 
 def _verify_integrity(model_path=None):

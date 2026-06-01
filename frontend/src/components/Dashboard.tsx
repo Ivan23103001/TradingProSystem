@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import TradingChart from "./TradingChart";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { API_BASE } from "../apiConfig";
+import { API_BASE, API_KEY } from "../apiConfig";
 
 interface DashboardData {
   price: string;
@@ -70,6 +70,8 @@ interface SystemStatusData {
   cache_label: string;
   worker_uptime: string;
   worker_connected: boolean;
+  is_retraining?: boolean;
+  broker_degraded?: boolean;
 }
 
 interface ScannerResult {
@@ -274,7 +276,7 @@ export default function Dashboard() {
 
       const resp = await fetch(`${API_BASE}/api/config`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
         body: JSON.stringify(payload)
       });
       if (resp.ok) {
@@ -452,6 +454,15 @@ export default function Dashboard() {
                       onChange={(e) => setConfigWatchlist(e.target.value)}
                       style={{ width: "100%", height: "60px", background: "#05080E", border: "1px solid var(--border-lit)", borderRadius: "8px", padding: "8px", color: "var(--text-main)", fontSize: "12px", fontFamily: "monospace", resize: "none" }}
                     />
+                    {configWatchlist.trim() !== "" && (() => {
+                      const tickers = configWatchlist.split(",").map(t => t.trim().toUpperCase()).filter(t => t !== "");
+                      const invalid = tickers.filter(t => !/^[A-Z0-9.\-]{1,10}$/.test(t));
+                      return invalid.length > 0 ? (
+                        <div style={{ color: "var(--red)", fontSize: "10px", marginTop: "4px", fontFamily: "monospace" }}>
+                          ⚠️ Tickers inválidos: {invalid.join(", ")} (deben ser 1-10 caracteres: A-Z, 0-9, ., -)
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
@@ -1105,7 +1116,57 @@ export default function Dashboard() {
                         {systemStatus.worker_connected ? `🟢 Conectado (${systemStatus.worker_uptime})` : "🔴 Desconectado (Ejecutar python bot_worker.py)"}
                       </b>
                     </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+                      <span style={{ color: "var(--text-muted)" }}>Broker Alpaca API</span>
+                      <b style={{ color: systemStatus.broker_degraded ? "var(--red)" : "var(--green)" }}>
+                        {systemStatus.broker_degraded ? "🔴 DEGRADADO (Rate Limits / Timeouts)" : "🟢 Operativo"}
+                      </b>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+                      <span style={{ color: "var(--text-muted)" }}>Modelo ML Background</span>
+                      <b style={{ color: systemStatus.is_retraining ? "var(--amber)" : "var(--green)" }}>
+                        {systemStatus.is_retraining ? "🔄 Optimizando Modelos..." : "✅ Actualizado"}
+                      </b>
+                    </div>
                   </div>
+
+                  {/* Critical Banners */}
+                  {systemStatus.broker_degraded && (
+                    <div style={{
+                      marginTop: "16px",
+                      padding: "12px 16px",
+                      background: "rgba(239,68,68,0.1)",
+                      border: "1px solid rgba(239,68,68,0.25)",
+                      borderRadius: "8px",
+                      color: "var(--red)",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px"
+                    }}>
+                      <span style={{ fontSize: "16px" }}>🚨</span>
+                      Alpaca Markets API Degradada — el bot está aplicando Exponential Backoff. Las órdenes se reintentarán automáticamente.
+                    </div>
+                  )}
+                  {systemStatus.is_retraining && (
+                    <div style={{
+                      marginTop: "12px",
+                      padding: "12px 16px",
+                      background: "rgba(245,158,11,0.1)",
+                      border: "1px solid rgba(245,158,11,0.25)",
+                      borderRadius: "8px",
+                      color: "var(--amber)",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px"
+                    }}>
+                      <span style={{ fontSize: "16px" }}>🧠</span>
+                      Reentrenamiento ML en curso — el sistema sigue escaneando y protegiendo posiciones sin interrupción.
+                    </div>
+                  )}
 
                 </div>
               ) : (

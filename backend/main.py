@@ -171,13 +171,16 @@ allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "")
 if allowed_origins_str:
     origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
 else:
-    # Default local development origins
+    # Default: permitir desarrollo local + acceso externo desde cualquier origen
     origins = [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "http://165.22.186.25:3000",
+        "http://165.22.186.25",
+        "*",  # Permitir cualquier origen en producción para el frontend
     ]
 
 app.add_middleware(

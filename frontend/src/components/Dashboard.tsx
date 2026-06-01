@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import TradingChart from "./TradingChart";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { API_BASE, API_KEY } from "../apiConfig";
@@ -141,15 +141,14 @@ export default function Dashboard() {
   const [configShortMinPrice, setConfigShortMinPrice] = useState(0.0);
   const [savingConfig, setSavingConfig] = useState(false);
 
-  // Animate score bar
+  // Animate score bar (no resetea scoreAnim a 0 innecesariamente)
   useEffect(() => {
-    setScoreAnim(0);
     const t = setTimeout(() => setScoreAnim(data.score), 200);
     return () => clearTimeout(t);
   }, [data.score]);
 
-  // Load Main Dashboard data
-  const loadDashboardData = () => {
+  // Load Main Dashboard data (useCallback para evitar recreación en cada render)
+  const loadDashboardData = useCallback(() => {
     fetch(`${API_BASE}/api/dashboard-state?ticker=${ticker}&interval=${interval}&period=${period}`)
       .then((r) => r.json())
       .then((json) => {
@@ -161,11 +160,11 @@ export default function Dashboard() {
         }
       })
       .catch(() => setConnected(false));
-  };
+  }, [ticker, interval, period]);
 
   useEffect(() => {
     loadDashboardData();
-  }, [ticker, interval, period]);
+  }, [loadDashboardData]);
 
   // Refresh Market Map
   const loadMarketMap = () => {

@@ -25,9 +25,13 @@ from core.database import init_db, get_trade_history
 from core.ml_engine import calculate_ml_rolling_accuracy
 from core.brain import TradingBrain, DB_FILE
 
-# Initialize database and brain
-init_db()
-TradingBrain.initialize()
+# Initialize database and brain (safe wrapper — backend NEVER crashes during import)
+try:
+    init_db()
+    TradingBrain.initialize()
+except Exception as e:
+    logging.error(f"Error durante inicialización (DB/Brain): {e}")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — la API REST arrancará en modo contingencia.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

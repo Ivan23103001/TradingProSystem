@@ -495,89 +495,91 @@ def get_dashboard_state(ticker: str = "SPY", interval: str = "15m", period: str 
         return {"error": str(e)}
 
 @app.get("/api/chart-data")
-def get_chart_data(ticker: str = "SPY", interval: str = "15m", period: str = "5d"):
+async def get_chart_data(ticker: str = "SPY", interval: str = "15m", period: str = "5d"):
     try:
+        import asyncio as _asyncio
+
         spy_sentiment = get_spy_sentiment()
         df = get_stock_data(ticker, period=period, interval=interval)
         if df.empty or len(df) < 14:
             raise HTTPException(status_code=404, detail="Not enough data")
-        
+
         df_a = apply_strategy(df, spy_sentiment=spy_sentiment, ticker_symbol=ticker)
-        
-        candles = []
-        ema20 = []
-        ema50 = []
-        ema200 = []
-        markers = []
 
-        is_daily = interval == "1d"
+        # Ejecutar el loop de iteración sobre el DataFrame en thread separado
+        # para no bloquear el event loop de Uvicorn con Pandas pesado.
+        def _build_chart_payload():
+            candles = []
+            ema20 = []
+            ema50 = []
+            ema200 = []
+            markers = []
+            is_daily = interval == "1d"
 
-        for idx, (dt, row) in enumerate(df_a.iterrows()):
-            # Time formatting
-            time_val = int(dt.timestamp()) if not is_daily else dt.strftime("%Y-%m-%d")
+            for idx, (dt, row) in enumerate(df_a.iterrows()):
+                time_val = int(dt.timestamp()) if not is_daily else dt.strftime("%Y-%m-%d")
 
-            # Candlestick
-            candles.append({
-                "time": time_val,
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
-                "volume": float(row["Volume"]),
-                "vol_color": "rgba(16,185,129,0.45)" if row["Close"] >= row["Open"] else "rgba(239,68,68,0.45)"
-            })
-
-            # Trend lines
-            if "EMA_20" in row and not row.isna()["EMA_20"]:
-                ema20.append({"time": time_val, "value": float(row["EMA_20"])})
-            if "EMA_50" in row and not row.isna()["EMA_50"]:
-                ema50.append({"time": time_val, "value": float(row["EMA_50"])})
-            if "EMA_200" in row and not row.isna()["EMA_200"]:
-                ema200.append({"time": time_val, "value": float(row["EMA_200"])})
-
-            # Sweeps Markers (Liquidity)
-            if "Bullish_Sweep_Signal" in row and row["Bullish_Sweep_Signal"] > 0:
-                markers.append({
+                candles.append({
                     "time": time_val,
-                    "position": "belowBar",
-                    "color": "#10b981",
-                    "shape": "arrowUp",
-                    "text": "Sweep ↑"
-                })
-            elif "Bearish_Sweep_Signal" in row and row["Bearish_Sweep_Signal"] > 0:
-                markers.append({
-                    "time": time_val,
-                    "position": "aboveBar",
-                    "color": "#ef4444",
-                    "shape": "arrowDown",
-                    "text": "Sweep ↓"
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
+                    "volume": float(row["Volume"]),
+                    "vol_color": "rgba(16,185,129,0.45)" if row["Close"] >= row["Open"] else "rgba(239,68,68,0.45)"
                 })
 
-        # Latest Order Blocks levels
-        bull_ob = 0.0
-        bear_ob = 0.0
-        if "Bullish_OB" in df_a.columns:
-            last_valid = df_a[df_a["Bullish_OB"] > 0]
-            if not last_valid.empty:
-                bull_ob = float(last_valid["Bullish_OB"].iloc[-1])
-        if "Bearish_OB" in df_a.columns:
-            last_valid = df_a[df_a["Bearish_OB"] > 0]
-            if not last_valid.empty:
-                bear_ob = float(last_valid["Bearish_OB"].iloc[-1])
+                if "EMA_20" in row and not row.isna()["EMA_20"]:
+                    ema20.append({"time": time_val, "value": float(row["EMA_20"])})
+                if "EMA_50" in row and not row.isna()["EMA_50"]:
+                    ema50.append({"time": time_val, "value": float(row["EMA_50"])})
+                if "EMA_200" in row and not row.isna()["EMA_200"]:
+                    ema200.append({"time": time_val, "value": float(row["EMA_200"])})
 
-        return {
-            "candles": candles,
-            "ema20": ema20,
-            "ema50": ema50,
-            "ema200": ema200,
-            "markers": markers,
-            "bullish_ob": bull_ob,
-            "bearish_ob": bear_ob
-        }
+                if "Bullish_Sweep_Signal" in row and row["Bullish_Sweep_Signal"] > 0:
+                    markers.append({
+                        "time": time_val,
+                        "position": "belowBar",
+                        "color": "#10b981",
+                        "shape": "arrowUp",
+                        "text": "Sweep ↑"
+                    })
+                elif "Bearish_Sweep_Signal" in row and row["Bearish_Sweep_Signal"] > 0:
+                    markers.append({
+                        "time": time_val,
+                        "position": "aboveBar",
+                        "color": "#ef4444",
+                        "shape": "arrowDown",
+                        "text": "Sweep ↓"
+                    })
+
+            bull_ob = 0.0
+            bear_ob = 0.0
+            if "Bullish_OB" in df_a.columns:
+                last_valid = df_a[df_a["Bullish_OB"] > 0]
+                if not last_valid.empty:
+                    bull_ob = float(last_valid["Bullish_OB"].iloc[-1])
+            if "Bearish_OB" in df_a.columns:
+                last_valid = df_a[df_a["Bearish_OB"] > 0]
+                if not last_valid.empty:
+                    bear_ob = float(last_valid["Bearish_OB"].iloc[-1])
+
+            return {
+                "candles": candles,
+                "ema20": ema20,
+                "ema50": ema50,
+                "ema200": ema200,
+                "markers": markers,
+                "bullish_ob": bull_ob,
+                "bearish_ob": bear_ob
+            }
+
+        return await _asyncio.to_thread(_build_chart_payload)
+
     except HTTPException:
         raise
     except Exception as e:
-        logging.exception("Error in chart data endpoint")
+        logging.error(f"❌ [/api/chart-data] Error para ticker={ticker}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/portfolio")
@@ -587,7 +589,6 @@ def get_portfolio_endpoint():
         if bc and bc.is_connected():
             acc = bc.get_account_info()
             positions = bc.get_open_positions()
-            # Format numbers as clean strings for view
             formatted_pos = []
             for p in positions:
                 formatted_pos.append({
@@ -598,16 +599,36 @@ def get_portfolio_endpoint():
                     "pnl_pct": f"{p['unrealized_plpc']:+,.2f}%",
                     "side": p["side"].upper()
                 })
-            return {
+            result = {
                 "connected": True,
+                "cached": False,
                 "buying_power": f"${acc['buying_power']:,.2f}",
                 "equity": f"${acc['equity']:,.2f}",
                 "status": acc["status"],
                 "positions": formatted_pos
             }
+            # Guardar en caché para fallback futuro
+            try:
+                from core.database import save_bot_state
+                save_bot_state({"portfolio_cache": result})
+            except Exception:
+                pass
+            return result
         else:
+            logging.warning("⚠️ [/api/portfolio] Broker no conectado — intentando caché...")
+            # Intentar recuperar último portfolio desde caché
+            try:
+                from core.database import load_bot_state
+                cached = load_bot_state()
+                if cached and "portfolio_cache" in cached:
+                    cached["portfolio_cache"]["cached"] = True
+                    logging.info("📦 [/api/portfolio] Sirviendo datos cacheados del portfolio.")
+                    return cached["portfolio_cache"]
+            except Exception:
+                pass
             return {
                 "connected": False,
+                "cached": False,
                 "buying_power": "$0.00",
                 "equity": "$0.00",
                 "status": "Desconectado",
@@ -615,8 +636,21 @@ def get_portfolio_endpoint():
                 "error": "Broker client credentials not set or incorrect."
             }
     except Exception as e:
+        logging.error(f"❌ [/api/portfolio] Error: {e}", exc_info=True)
+        # Fallback a caché incluso en error
+        try:
+            from core.database import load_bot_state
+            cached = load_bot_state()
+            if cached and "portfolio_cache" in cached:
+                cached["portfolio_cache"]["cached"] = True
+                cached["portfolio_cache"]["error"] = f"Alpaca error — mostrando último snapshot: {e}"
+                logging.info("📦 [/api/portfolio] Fallback a caché tras excepción.")
+                return cached["portfolio_cache"]
+        except Exception:
+            pass
         return {
             "connected": False,
+            "cached": False,
             "buying_power": "$0.00",
             "equity": "$0.00",
             "status": "Error",

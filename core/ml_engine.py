@@ -49,17 +49,19 @@ def _sign_data(data: bytes) -> str:
     """Genera firma HMAC-SHA256 de los datos serializados."""
     return hmac.new(_SIGNING_KEY, data, hashlib.sha256).hexdigest()
 
-# Flag global para evitar spam de advertencias de firma (solo se emite una vez por sesión)
+# Flag global para evitar spam de logs de firma (máximo un mensaje por sesión)
 _warned_missing_sig = False
+_confirmado_firma_ok = False
 
 
 def _verify_integrity(model_path=None):
     """
     Verifica que el archivo .pkl no haya sido manipulado usando su firma HMAC.
-    Si el modelo no tiene firma, la genera automáticamente para evitar warnings repetitivos.
-    Retorna False solo si hay manipulación detectada (firma existente pero inválida).
+    - Si el .sig no existe, intenta generarlo y emite un solo INFO de confirmación.
+    - Si el .sig existe y es válido, NO emite nada (silencio total).
+    - Solo emite ERROR si hay manipulación detectada (firma inválida).
     """
-    global _warned_missing_sig
+    global _warned_missing_sig, _confirmado_firma_ok
     pkl_path = model_path or MODEL_PATH
     sig_path = pkl_path + ".sig"
 
@@ -67,9 +69,8 @@ def _verify_integrity(model_path=None):
         return False
 
     if not os.path.exists(sig_path):
-        # Modelo legacy sin firma — advertir una sola vez en debug, generar firma si es posible
+        # Modelo sin firma — intentar generarla silenciosamente
         if not _warned_missing_sig:
-            logging.debug(f"[!] Sin firma para {pkl_path} — generando firma HMAC automáticamente.")
             _warned_missing_sig = True
         try:
             with open(pkl_path, "rb") as f:
@@ -77,11 +78,14 @@ def _verify_integrity(model_path=None):
             signature = _sign_data(raw)
             with open(sig_path, "w") as f:
                 f.write(signature)
-            logging.info(f"🔐 Firma HMAC generada para modelo legacy → {sig_path}")
-        except Exception as e:
-            logging.debug(f"No se pudo generar firma para {pkl_path}: {e}")
-        return True  # Permitir carga (no había firma previa que validar)
+            if not _confirmado_firma_ok:
+                logging.info(f"🔐 Firma HMAC generada para modelo → {sig_path}")
+                _confirmado_firma_ok = True
+        except Exception:
+            pass  # Sin permisos de escritura: operar sin firma, sin llenar logs
+        return True
 
+    # Firma existe — validar en silencio
     with open(pkl_path, "rb") as f:
         raw = f.read()
     with open(sig_path, "r") as f:

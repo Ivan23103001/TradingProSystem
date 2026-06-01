@@ -13,7 +13,7 @@ from core.brain import TradingBrain
 from core.notifier import TelegramNotifier
 from core.simulator import is_market_open, check_critical_hours
 from core.config import get_config, save_config, load_env
-from core.database import init_db, save_trade, save_equity, update_last_trade_pnl
+from core.database import init_db, save_trade, save_equity, update_last_trade_pnl, save_bot_state, load_bot_state
 import pytz
 
 # Memoria de estados para trazabilidad (Punto 5)
@@ -68,6 +68,55 @@ def main():
         logging.warning("Broker No Conectado. Revisa tus credenciales en el archivo .env")
 
     state_memory = {} # Para no repetir alertas/compras sobre la misma señal en el mismo día
+
+    # =================================================================
+    # RECONSTRUCCIÓN DE ESTADO TRAS REINICIO (Persistencia en DB)
+    # =================================================================
+    try:
+        saved_state = load_bot_state()
+        if saved_state:
+            # Restaurar variables críticas de control
+            state_memory["consecutive_losses"] = saved_state.get("consecutive_losses", 0)
+            state_memory["circuit_breaker_until"] = saved_state.get("circuit_breaker_until", 0)
+            state_memory["daily_loss_breaker"] = saved_state.get("daily_loss_breaker", False)
+            state_memory["equity_day_date"] = saved_state.get("equity_day_date", "")
+            state_memory["equity_day_start"] = saved_state.get("equity_day_start")
+            state_memory["equity_week"] = saved_state.get("equity_week")
+            state_memory["equity_week_start"] = saved_state.get("equity_week_start")
+            state_memory["last_retrain"] = saved_state.get("last_retrain", "")
+
+            # Restaurar tracking de señales del día
+            for k, v in saved_state.items():
+                if k.startswith("last_trade_") or k.startswith("last_sl_") or "_" in k and k not in state_memory:
+                    state_memory[k] = v
+
+            logging.info(
+                f"📥 Estado restaurado de DB: {len(saved_state)} claves. "
+                f"CB diario={'🚨' if state_memory.get('daily_loss_breaker') else '🟢'}, "
+                f"pérdidas consecutivas={state_memory.get('consecutive_losses', 0)}"
+            )
+
+            # Reconstruir software_monitored desde posiciones abiertas en Alpaca
+            if bc and bc.is_connected():
+                try:
+                    open_pos = bc.get_open_positions()
+                    for p in open_pos:
+                        sym = p['symbol']
+                        # Solo monitorear si NO tiene bracket (no podemos saberlo con certeza,
+                        # así que registramos todas las posiciones abiertas para protección)
+                        if sym not in software_monitored:
+                            software_monitored[sym] = {
+                                'side': 'buy' if p['side'] == 'long' else 'sell',
+                                'entry_price': p['avg_entry_price'],
+                                'sl_price': 0.0,   # Se recalculará en el siguiente ciclo
+                                'tp_price': 0.0,
+                                'time': time.time()
+                            }
+                            logging.info(f"🔁 Reconstruido monitoreo para posición huérfana: {sym}")
+                except Exception as e:
+                    logging.warning(f"No se pudo reconstruir software_monitored: {e}")
+    except Exception as e:
+        logging.warning(f"No se pudo cargar estado persistido: {e}")
 
     while True:
         try:
@@ -513,6 +562,12 @@ def main():
                 acc = bc.get_account_info()
                 if acc:
                     save_equity(acc['equity'])
+
+            # Persistir estado para recuperación tras crash/reinicio
+            try:
+                save_bot_state(state_memory)
+            except Exception:
+                pass  # No bloquear el loop si la DB falla
             
             # El loop principal corre cada minuto si el scan o trade están on
             time.sleep(60)

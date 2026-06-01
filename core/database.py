@@ -63,12 +63,16 @@ def init_db(db_path=None):
         c.execute('''CREATE TABLE IF NOT EXISTS equity_history
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       fecha TEXT, total_equity REAL)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS bot_state
+                     (id INTEGER PRIMARY KEY CHECK (id = 1),
+                      state_json TEXT NOT NULL,
+                      updated_at TEXT NOT NULL)''')
         # Índices para consultas frecuentes
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_fecha ON trades(fecha)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_equity_fecha ON equity_history(fecha)''')
         conn.commit()
-        logging.info("✅ Base de datos inicializada: tablas trades y equity_history listas.")
+        logging.info("✅ Base de datos inicializada: tablas trades, equity_history y bot_state listas.")
     except Exception as e:
         logging.error(f"Error inicializando DB: {e}")
         # Si falla la inicialización, remover la conexión dañada del pool
@@ -187,6 +191,49 @@ def update_last_trade_pnl(ticker, exit_price, reason, db_path=None):
             logging.debug(f"No se encontró trade abierto sin PnL para {ticker} en la DB.")
     except Exception as e:
         logging.error(f"Error actualizando PnL para {ticker}: {e}")
+
+def save_bot_state(state_dict, db_path=None):
+    """
+    Persiste el estado volátil del bot (state_memory) como JSON en la tabla bot_state.
+    Usa INSERT OR REPLACE para mantener una sola fila (id=1).
+    """
+    import json
+    from datetime import datetime
+    path = db_path or DB_NAME
+    conn = get_connection(path)
+    try:
+        state_json = json.dumps(state_dict, default=str, ensure_ascii=False)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "INSERT OR REPLACE INTO bot_state (id, state_json, updated_at) VALUES (1, ?, ?)",
+            (state_json, now_str)
+        )
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Error guardando bot_state: {e}")
+
+
+def load_bot_state(db_path=None):
+    """
+    Carga el último estado persistido del bot desde la tabla bot_state.
+    Retorna un dict o {} si no hay estado guardado.
+    """
+    import json
+    path = db_path or DB_NAME
+    if not os.path.exists(path):
+        return {}
+    conn = get_connection(path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT state_json FROM bot_state WHERE id = 1")
+        row = cursor.fetchone()
+        if row:
+            return json.loads(row[0])
+        return {}
+    except Exception as e:
+        logging.error(f"Error cargando bot_state: {e}")
+        return {}
+
 
 def archive_old_trades(days_to_keep=90, db_path=None):
     """

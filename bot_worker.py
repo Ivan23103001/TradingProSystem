@@ -1,6 +1,15 @@
+# ═══════════════════════════════════════════════════════════════
+# ABSOLUTO PRIMERO: cargar .env en el worker también (PM2 no lo hereda)
+# ═══════════════════════════════════════════════════════════════
+import pathlib
+import os
+_base_dir = pathlib.Path(__file__).parent.resolve()
+_dotenv_path = _base_dir / ".env"
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=_dotenv_path, override=True)
+
 import time
 import logging
-import os
 import re
 import threading
 import concurrent.futures

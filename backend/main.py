@@ -332,6 +332,11 @@ class ConfigUpdate(BaseModel):
     long_max_price: float = None
     short_min_price: float = None
 
+@app.get("/api/settings")
+def get_settings_endpoint():
+    """Alias de /api/config para compatibilidad con clientes que usan /api/settings."""
+    return get_config_endpoint()
+
 @app.get("/api/health")
 def health_check():
     db_ok = False

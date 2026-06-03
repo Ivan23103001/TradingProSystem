@@ -8,6 +8,24 @@ import os
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 _dotenv_path = _BASE_DIR / ".env"
 from dotenv import load_dotenv
+# Forzar carga absoluta: leer el archivo manualmente como respaldo
+_env_vars_from_file = {}
+_env_file_exists = _dotenv_path.exists()
+if _env_file_exists:
+    try:
+        with open(_dotenv_path, "r", encoding="utf-8") as _ef:
+            for _line in _ef:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _key, _val = _line.split("=", 1)
+                    _key = _key.strip()
+                    _val = _val.strip().strip('"').strip("'")
+                    _env_vars_from_file[_key] = _val
+                    if _key not in os.environ:
+                        os.environ[_key] = _val
+    except Exception as _e:
+        logging.warning(f"⚠️ Error leyendo .env manualmente: {_e}")
+
 load_dotenv(dotenv_path=_dotenv_path, override=True)
 
 # ═══════════════════════════════════════════════════════════════
@@ -17,9 +35,13 @@ import sys
 import logging
 from datetime import datetime
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.info(f"📝 .env cargado: existe={_dotenv_path.exists()}, ruta={_dotenv_path}")
+logging.info(f"📝 .env cargado: existe={_env_file_exists}, ruta={_dotenv_path}")
+_trading_keys_in_file = [k for k in _env_vars_from_file if k.startswith("TRADING_")]
 _trading_vars_loaded = {k: f"***(len={len(v)})" for k, v in os.environ.items() if k.startswith("TRADING_")}
-logging.info(f"🔑 Variables TRADING_ cargadas: {_trading_vars_loaded}")
+logging.info(f"🔑 .env contiene {len(_env_vars_from_file)} vars. TRADING_ en archivo: {_trading_keys_in_file}")
+logging.info(f"🔑 Variables TRADING_ en environ: {_trading_vars_loaded}")
+if not _trading_vars_loaded:
+    logging.error("🚨 NINGUNA variable TRADING_ en environ tras cargar .env. Verifica el archivo .env en el VPS.")
 
 # ═══════════════════════════════════════════════════════════════
 # Inyectar DB_FILE en el entorno del sistema operativo de forma
@@ -209,6 +231,39 @@ async def lifespan(app: FastAPI):
     logging.info("ThreadPoolExecutor finalizado limpiamente.")
 
 app = FastAPI(title="TradingProSystem API v5.0", lifespan=lifespan)
+
+# ═══════════════════════════════════════════════════════════════
+# API v1 Router — monta todas las rutas /api también bajo /api/v1
+# para eliminar los 404s de clientes que usan versionado de API.
+# ═══════════════════════════════════════════════════════════════
+from fastapi import APIRouter as _APIRouter
+_v1_router = _APIRouter(prefix="/api/v1")
+
+def _v1_proxy_factory(path: str, methods: list):
+    """Crea un endpoint proxy que reenvía a la ruta /api correspondiente."""
+    async def _proxy(request: Request):
+        # Redirigir internamente: construir URL target y reenviar
+        target_path = path.replace("/api/v1", "/api")
+        # Usamos la misma app para resolver el endpoint
+        return await _proxy_request(request, target_path)
+    return _proxy
+
+from fastapi.routing import APIRoute
+import inspect
+
+# Clonar todas las rutas /api como /api/v1 dinámicamente
+for _route in app.router.routes:
+    if not isinstance(_route, APIRoute):
+        continue
+    _path = _route.path
+    _methods = _route.methods
+    if _path.startswith("/api/") and not _path.startswith("/api/v1"):
+        _v1_path = _path.replace("/api/", "/api/v1/", 1)
+        _endpoint = _route.endpoint
+        _v1_router.add_api_route(_v1_path, endpoint=_endpoint, methods=_methods,
+                                 response_model=_route.response_model)
+
+app.include_router(_v1_router)
 
 # --- API Key Auth Middleware (3.5) ---
 # Lee API_KEY desde bot_config.json; si no existe, genera una por defecto

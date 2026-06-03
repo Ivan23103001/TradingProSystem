@@ -232,39 +232,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="TradingProSystem API v5.0", lifespan=lifespan)
 
-# ═══════════════════════════════════════════════════════════════
-# API v1 Router — monta todas las rutas /api también bajo /api/v1
-# para eliminar los 404s de clientes que usan versionado de API.
-# ═══════════════════════════════════════════════════════════════
-from fastapi import APIRouter as _APIRouter
-_v1_router = _APIRouter(prefix="/api/v1")
-
-def _v1_proxy_factory(path: str, methods: list):
-    """Crea un endpoint proxy que reenvía a la ruta /api correspondiente."""
-    async def _proxy(request: Request):
-        # Redirigir internamente: construir URL target y reenviar
-        target_path = path.replace("/api/v1", "/api")
-        # Usamos la misma app para resolver el endpoint
-        return await _proxy_request(request, target_path)
-    return _proxy
-
-from fastapi.routing import APIRoute
-import inspect
-
-# Clonar todas las rutas /api como /api/v1 dinámicamente
-for _route in app.router.routes:
-    if not isinstance(_route, APIRoute):
-        continue
-    _path = _route.path
-    _methods = _route.methods
-    if _path.startswith("/api/") and not _path.startswith("/api/v1"):
-        _v1_path = _path.replace("/api/", "/api/v1/", 1)
-        _endpoint = _route.endpoint
-        _v1_router.add_api_route(_v1_path, endpoint=_endpoint, methods=_methods,
-                                 response_model=_route.response_model)
-
-app.include_router(_v1_router)
-
 # --- API Key Auth Middleware (3.5) ---
 # Lee API_KEY desde bot_config.json; si no existe, genera una por defecto
 def _load_api_key():
@@ -980,6 +947,30 @@ def run_scanner_endpoint(interval: str = "15m", period: str = "5d"):
         return formatted_results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ═══════════════════════════════════════════════════════════════
+# API v1 Router — clona /api/* → /api/v1/* (SE EJECUTA AL FINAL,
+# cuando TODAS las rutas ya están registradas en la app)
+# ═══════════════════════════════════════════════════════════════
+from fastapi import APIRouter as _APIRouter
+from fastapi.routing import APIRoute
+
+_v1_router = _APIRouter(prefix="/api/v1")
+for _route in app.router.routes:
+    if not isinstance(_route, APIRoute):
+        continue
+    _path = _route.path
+    if _path.startswith("/api/") and not _path.startswith("/api/v1"):
+        _v1_path = _path.replace("/api/", "/api/v1/", 1)
+        _v1_router.add_api_route(
+            _v1_path,
+            endpoint=_route.endpoint,
+            methods=_route.methods,
+            response_model=_route.response_model,
+        )
+
+app.include_router(_v1_router)
+logging.info(f"🔄 Router /api/v1 montado con {len(_v1_router.routes)} rutas clonadas.")
 
 # ═══════════════════════════════════════════════════════════════
 # INICIO: Usar SIEMPRE la CLI de Uvicorn para levantar el backend:

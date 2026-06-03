@@ -18,7 +18,7 @@ _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 _dotenv_path = _BASE_DIR / ".env"
 
 from dotenv import load_dotenv
-load_dotenv(dotenv_path=_dotenv_path)
+load_dotenv(dotenv_path=_dotenv_path, override=True)
 logging.info(f"📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
 
 # ═══════════════════════════════════════════════════════════════
@@ -66,7 +66,7 @@ _init_ok = False
 _init_errors = []
 _init_done = threading.Event()  # Señal de que la inicialización terminó
 
-logging.info("🚀 Uvicorn bindeando puerto 8000 — inicialización en background...")
+logging.info("🚀 Inicializando backend — imports en background (Uvicorn gestiona el bind)...")
 logging.info(f"📍 DB_FILE global: {DB_FILE}")
 
 
@@ -216,11 +216,22 @@ def _load_api_key():
     """Carga la API Key desde variable de entorno con validación de seguridad."""
     # Prioridad 1: variable de entorno (seteada en el VPS vía PM2 o systemd)
     key = os.getenv("TRADING_API_KEY", "")
+    
+    # Diagnóstico: mostrar estado de la variable sin exponer el valor real
+    key_exists = "TRADING_API_KEY" in os.environ
+    key_len = len(key) if key else 0
+    trading_vars = {k: f"***({len(v)} chars)" for k, v in os.environ.items() if k.startswith("TRADING_")}
+    logging.info(f"🔑 _load_api_key: TRADING_API_KEY existe en environ={key_exists}, longitud={key_len}, vars={trading_vars}")
+    
     if key and len(key) >= 16:
+        logging.info("✅ API Key válida cargada desde TRADING_API_KEY.")
         return key
 
     # Sin clave válida: denegar acceso a endpoints POST
-    logging.critical("TRADING_API_KEY no configurada. Endpoints POST deshabilitados por seguridad.")
+    logging.critical(
+        f"TRADING_API_KEY no configurada o inválida (existe={key_exists}, len={key_len}, necesita >=16). "
+        "Endpoints POST deshabilitados por seguridad."
+    )
     return None
 
 API_KEY = _load_api_key()
@@ -910,6 +921,9 @@ def run_scanner_endpoint(interval: str = "15m", period: str = "5d"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=False)
+# ═══════════════════════════════════════════════════════════════
+# INICIO: Usar SIEMPRE la CLI de Uvicorn para levantar el backend:
+#   uvicorn backend.main:app --host 0.0.0.0 --port 8000
+# NO ejecutar python backend/main.py directamente — causa conflicto
+# de doble bind ("address already in use").
+# ═══════════════════════════════════════════════════════════════

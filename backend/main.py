@@ -1,7 +1,13 @@
 import sys
 import os
 import pathlib
+import logging
 from datetime import datetime
+
+# ═══════════════════════════════════════════════════════════════
+# Configurar logging ANTES de cualquier uso
+# ═══════════════════════════════════════════════════════════════
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ═══════════════════════════════════════════════════════════════
 # PRIMERÍSIMO: cargar variables de entorno desde .env
@@ -13,7 +19,7 @@ _dotenv_path = _BASE_DIR / ".env"
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=_dotenv_path)
-print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
+logging.info(f"📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
 
 # ═══════════════════════════════════════════════════════════════
 # Inyectar DB_FILE en el entorno del sistema operativo de forma
@@ -23,9 +29,9 @@ print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📝 ¿Existe .env? {_d
 # ═══════════════════════════════════════════════════════════════
 if not os.environ.get("DB_FILE"):
     os.environ["DB_FILE"] = str(_BASE_DIR / "trade_history.db")
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 💉 DB_FILE inyectado: {os.environ['DB_FILE']}")
+    logging.info(f"💉 DB_FILE inyectado: {os.environ['DB_FILE']}")
 else:
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📌 DB_FILE ya existía en entorno: {os.environ['DB_FILE']}")
+    logging.info(f"📌 DB_FILE ya existía en entorno: {os.environ['DB_FILE']}")
 
 # Ensure base directory is in python path
 sys.path.append(str(_BASE_DIR))
@@ -33,7 +39,6 @@ sys.path.append(str(_BASE_DIR))
 # ── Imports estándar ──
 import asyncio
 import concurrent.futures
-import logging
 import requests
 import time
 import threading
@@ -61,8 +66,8 @@ _init_ok = False
 _init_errors = []
 _init_done = threading.Event()  # Señal de que la inicialización terminó
 
-print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 Uvicorn bindeando puerto 8000 — inicialización en background...")
-print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 📍 DB_FILE global: {DB_FILE}")
+logging.info("🚀 Uvicorn bindeando puerto 8000 — inicialización en background...")
+logging.info(f"📍 DB_FILE global: {DB_FILE}")
 
 
 def _init_all_modules():
@@ -80,7 +85,7 @@ def _init_all_modules():
     # diferente, usamos el valor inyectado al inicio del proceso.
     # ═══════════════════════════════════════════════════════════
     DB_FILE = os.environ.get("DB_FILE", str(_BASE_DIR / "trade_history.db"))
-    print(f"[INIT] 🔄 DB_FILE re-leído del entorno: {DB_FILE}")
+    logging.info(f"🔄 DB_FILE re-leído del entorno: {DB_FILE}")
 
     errors = []
 
@@ -89,37 +94,37 @@ def _init_all_modules():
         try:
             from core.data_fetcher import get_stock_data as gsd, get_cache_stats as gcs
             get_stock_data, get_cache_stats = gsd, gcs
-            print(f"[INIT] ✅ data_fetcher cargado.")
+            logging.info("✅ data_fetcher cargado.")
         except Exception as e:
             errors.append(f"data_fetcher: {e}")
-            print(f"[INIT] ❌ data_fetcher falló: {e}")
+            logging.error(f"data_fetcher falló: {e}")
 
         # ── strategy ──
         try:
             from core.strategy import apply_strategy as ap, get_spy_sentiment as gss
             apply_strategy, get_spy_sentiment = ap, gss
-            print(f"[INIT] ✅ strategy cargado.")
+            logging.info("✅ strategy cargado.")
         except Exception as e:
             errors.append(f"strategy: {e}")
-            print(f"[INIT] ❌ strategy falló: {e}")
+            logging.error(f"strategy falló: {e}")
 
         # ── simulator ──
         try:
             from core.simulator import is_market_open as imo
             is_market_open = imo
-            print(f"[INIT] ✅ simulator cargado.")
+            logging.info("✅ simulator cargado.")
         except Exception as e:
             errors.append(f"simulator: {e}")
-            print(f"[INIT] ❌ simulator falló: {e}")
+            logging.error(f"simulator falló: {e}")
 
         # ── broker ──
         try:
             from core.broker import BrokerClient as BC
             BrokerClient = BC
-            print(f"[INIT] ✅ broker cargado.")
+            logging.info("✅ broker cargado.")
         except Exception as e:
             errors.append(f"broker: {e}")
-            print(f"[INIT] ❌ broker falló: {e}")
+            logging.error(f"broker falló: {e}")
 
         # ── brain (DEBE ir ANTES que database para que DB_FILE esté sincronizado) ──
         try:
@@ -130,47 +135,47 @@ def _init_all_modules():
             if not os.environ.get("DB_FILE"):
                 DB_FILE = BRAIN_DB_FILE
                 os.environ["DB_FILE"] = DB_FILE
-            print(f"[INIT] ✅ brain importado (DB_FILE={BRAIN_DB_FILE}).")
+            logging.info(f"✅ brain importado (DB_FILE={BRAIN_DB_FILE}).")
             if TradingBrain:
                 TradingBrain.initialize()
-                print(f"[INIT] ✅ TradingBrain inicializado.")
+                logging.info("✅ TradingBrain inicializado.")
         except Exception as e:
             errors.append(f"brain: {e}")
-            print(f"[INIT] ❌ brain falló: {e}")
+            logging.error(f"brain falló: {e}")
 
         # ── database (AHORA con DB_FILE ya resuelto desde brain/entorno) ──
         try:
             from core.database import init_db as idb, get_trade_history as gth
             init_db, get_trade_history = idb, gth
             if init_db:
-                print(f"[INIT] Inicializando base de datos... (DB_FILE={DB_FILE})")
+                logging.info(f"Inicializando base de datos... (DB_FILE={DB_FILE})")
                 # Pasar DB_FILE explícitamente — no depender de defaults del módulo
                 init_db(DB_FILE)
                 # Verificar que la DB se creó
                 if DB_FILE and os.path.exists(DB_FILE):
-                    print(f"[INIT] ✅ database inicializada — DB existe en {DB_FILE}")
+                    logging.info(f"✅ database inicializada — DB existe en {DB_FILE}")
                 else:
-                    print(f"[INIT] ⚠️ database inicializada pero DB_FILE={DB_FILE} no encontrada en disco.")
+                    logging.warning(f"database inicializada pero DB_FILE={DB_FILE} no encontrada en disco.")
             else:
                 errors.append("database: init_db es None")
-                print(f"[INIT] ❌ database: init_db es None tras import.")
+                logging.error("database: init_db es None tras import.")
         except Exception as e:
             errors.append(f"database: {e}")
-            print(f"[INIT] ❌ database falló: {e}")
+            logging.error(f"database falló: {e}")
 
         # ── ml_engine ──
         try:
             from core.ml_engine import calculate_ml_rolling_accuracy as cml
             calculate_ml_rolling_accuracy = cml
-            print(f"[INIT] ✅ ml_engine cargado.")
+            logging.info("✅ ml_engine cargado.")
         except Exception as e:
             errors.append(f"ml_engine: {e}")
-            print(f"[INIT] ❌ ml_engine falló: {e}")
+            logging.error(f"ml_engine falló: {e}")
 
     except Exception as e:
         # Catch-all: NUNCA dejar que el hilo muera en silencio
         errors.append(f"CRITICAL_UNHANDLED: {e}")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🔥🔥🔥 CRITICAL INIT ERROR: {e}")
+        logging.critical(f"CRITICAL INIT ERROR: {e}")
         import traceback
         traceback.print_exc()
 
@@ -180,11 +185,11 @@ def _init_all_modules():
         _init_errors = errors
         msg = " | ".join(errors)
         logging.error(f"Errores durante inicialización: {msg}")
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⚠️  Inicialización parcial — {len(errors)} módulo(s) con error. Uvicorn sigue activo.")
+        logging.warning(f"Inicialización parcial — {len(errors)} módulo(s) con error. Uvicorn sigue activo.")
     else:
         _init_ok = True
         _init_errors = []
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ Backend inicializado correctamente — {7} módulos cargados.")
+        logging.info(f"✅ Backend inicializado correctamente — {7} módulos cargados.")
 
     _init_done.set()
 
@@ -208,17 +213,15 @@ app = FastAPI(title="TradingProSystem API v5.0", lifespan=lifespan)
 # --- API Key Auth Middleware (3.5) ---
 # Lee API_KEY desde bot_config.json; si no existe, genera una por defecto
 def _load_api_key():
-    try:
-        if TradingBrain is not None:
-            config = TradingBrain.get_runtime_config()
-            key = config.get("api_key", "")
-            if key and len(key) >= 8:
-                return key
-    except Exception:
-        pass
-    # Generar clave por defecto si no existe en config
-    default_key = os.getenv("TRADING_API_KEY", "tradingpro-api-key-change-me")
-    return default_key
+    """Carga la API Key desde variable de entorno con validación de seguridad."""
+    # Prioridad 1: variable de entorno (seteada en el VPS vía PM2 o systemd)
+    key = os.getenv("TRADING_API_KEY", "")
+    if key and len(key) >= 16:
+        return key
+
+    # Sin clave válida: denegar acceso a endpoints POST
+    logging.critical("TRADING_API_KEY no configurada. Endpoints POST deshabilitados por seguridad.")
+    return None
 
 API_KEY = _load_api_key()
 
@@ -226,6 +229,11 @@ API_KEY = _load_api_key()
 async def api_key_auth_middleware(request: Request, call_next):
     # Solo proteger endpoints POST /api/config y rutas sensibles
     if request.url.path in ("/api/config",) and request.method == "POST":
+        if not API_KEY:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "API Key no configurada en el servidor. Contacte al administrador."}
+            )
         auth_header = request.headers.get("X-API-Key", "")
         if not auth_header or auth_header != API_KEY:
             return JSONResponse(
@@ -266,7 +274,6 @@ else:
         "http://127.0.0.1:5173",
         "http://165.22.186.25:3000",
         "http://165.22.186.25",
-        "*",  # Permitir cualquier origen en producción para el frontend
     ]
 
 app.add_middleware(

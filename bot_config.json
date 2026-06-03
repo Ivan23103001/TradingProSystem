@@ -14,6 +14,5 @@
     "short_amount": 50.0,
     "long_max_price": null,
     "short_min_price": null,
-    "daily_loss_breaker": false,
-    "api_key": "TradingPro2026!SecureAPI"
+    "daily_loss_breaker": false
 }

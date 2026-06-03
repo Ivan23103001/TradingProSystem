@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import pathlib
+import logging
 import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
@@ -120,8 +121,7 @@ class TradingBrain:
             load_dotenv(".env.dev")
             
         TradingBrain.check_integrity()
-        # Iniciar logger centralizado si es necesario
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Cerebro Inicializado: Entorno validado (Modo: {env_mode}).")
+        logging.info(f"Cerebro Inicializado: Entorno validado (Modo: {env_mode}).")
 
     @staticmethod
     def get_runtime_config():
@@ -144,9 +144,26 @@ class TradingBrain:
 
     @staticmethod
     def save_runtime_config(config_dict):
-        """Guarda cualquier cambio en la configuración asegurando la integridad del JSON."""
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config_dict, f, indent=4)
+        """Guarda cualquier cambio en la configuración usando escritura atómica (write-to-temp + rename)."""
+        import tempfile
+        temp_name = None
+        try:
+            # Escribir a archivo temporal en el mismo directorio (mismo filesystem = rename atómico)
+            with tempfile.NamedTemporaryFile('w', delete=False, dir=os.path.dirname(CONFIG_FILE),
+                                             prefix='.bot_config_', suffix='.tmp') as tf:
+                json.dump(config_dict, tf, indent=4)
+                temp_name = tf.name
+            # Renombrar atómicamente el temporal al destino final
+            os.replace(temp_name, CONFIG_FILE)
+        except Exception:
+            # Fallback: escritura directa si el método atómico falla
+            if temp_name and os.path.exists(temp_name):
+                try:
+                    os.unlink(temp_name)
+                except Exception:
+                    pass
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config_dict, f, indent=4)
 
     @staticmethod
     def check_integrity():
@@ -155,18 +172,15 @@ class TradingBrain:
         missing = [f for f in critical_files if not os.path.exists(f)]
         
         if missing:
-             # Si faltan archivos, activamos modos de contingencia
-             print(f"Alerta de Integridad: Faltan archivos críticos ({', '.join(missing)})")
-             # Aquí podríamos forzar la descarga de un modelo fallback o iniciar DB
-        
+            logging.warning(f"Alerta de Integridad: Faltan archivos críticos ({', '.join(missing)})")
+         
         # Validar DB
         try:
             from core.database import get_connection
             conn = get_connection(DB_FILE)
             conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            # No cerrar: la conexión pertenece al pool thread-local
         except Exception:
-            print("Error de Integridad: Base de Datos corrupta o inexistente.")
+            logging.error("Error de Integridad: Base de Datos corrupta o inexistente.")
 
     @staticmethod
     def get_technical_params():

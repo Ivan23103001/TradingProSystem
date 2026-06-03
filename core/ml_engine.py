@@ -133,21 +133,10 @@ def _verify_integrity(model_path=None):
         return False
 
     if not os.path.exists(sig_path):
-        # Modelo sin firma — intentar generarla silenciosamente
-        if not _warned_missing_sig:
-            _warned_missing_sig = True
-        try:
-            with open(pkl_path, "rb") as f:
-                raw = f.read()
-            signature = _sign_data(raw)
-            with open(sig_path, "w") as f:
-                f.write(signature)
-            if not _confirmado_firma_ok:
-                logging.info(f"🔐 Firma HMAC generada para modelo → {sig_path}")
-                _confirmado_firma_ok = True
-        except Exception:
-            pass  # Sin permisos de escritura: operar sin firma, sin llenar logs
-        return True
+        # Modelo sin firma — RECHAZAR. La firma debe generarse explícitamente
+        # durante el entrenamiento, no automáticamente en verificación.
+        logging.error(f"[!] Firma HMAC no encontrada para {pkl_path} — el modelo debe ser re-entrenado para generar su firma.")
+        return False
 
     # Firma existe — validar en silencio
     with open(pkl_path, "rb") as f:

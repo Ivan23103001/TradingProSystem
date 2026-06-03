@@ -173,20 +173,28 @@ def update_last_trade_pnl(ticker, exit_price, reason, db_path=None):
         )
         row = cursor.fetchone()
         if row:
-            trade_id, tipo, entry_price, qty_or_amt = row
+            trade_id, tipo, entry_price, notional_or_qty = row
             if entry_price > 0:
-                pnl_pct = (exit_price - entry_price) / entry_price
                 if "SHORT" in tipo or "sell" in tipo.lower():
-                    pnl_pct = -pnl_pct
-                    
-                pnl_cash = pnl_pct * qty_or_amt
+                    # Para SHORT: notional_or_qty guarda el notional (USD invertido).
+                    # shares = notional / entry_price
+                    # PnL = (entry_price - exit_price) * shares
+                    shares = notional_or_qty / entry_price
+                    pnl_cash = (entry_price - exit_price) * shares
+                else:
+                    # Para LONG: notional_or_qty guarda el notional (USD invertido).
+                    # shares = notional / entry_price
+                    # PnL = (exit_price - entry_price) * shares
+                    shares = notional_or_qty / entry_price
+                    pnl_cash = (exit_price - entry_price) * shares
                 
                 cursor.execute(
                     "UPDATE trades SET pnl = ? WHERE id = ?",
                     (pnl_cash, trade_id)
                 )
                 conn.commit()
-                logging.info(f"💾 [DB Risk] PnL Actualizado para {ticker}: ${pnl_cash:.2f} ({pnl_pct*100:.1f}%) | Motivo: {reason}")
+                pnl_pct = (pnl_cash / notional_or_qty) * 100
+                logging.info(f"💾 [DB Risk] PnL Actualizado para {ticker}: ${pnl_cash:.2f} ({pnl_pct:.1f}%) | Motivo: {reason}")
         else:
             logging.debug(f"No se encontró trade abierto sin PnL para {ticker} en la DB.")
     except Exception as e:

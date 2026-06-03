@@ -2,6 +2,7 @@ import time
 import logging
 import os
 import re
+import threading
 import concurrent.futures
 from datetime import datetime
 import pandas as pd
@@ -119,6 +120,7 @@ def main():
         logging.warning(f"No se pudo cargar estado persistido: {e}")
 
     while True:
+        cycle_start = time.time()
         try:
             config = get_config()
             auto_scan = config.get('auto_scan', False)
@@ -582,8 +584,10 @@ def main():
             except Exception:
                 pass  # No bloquear el loop si la DB falla
             
-            # El loop principal corre cada minuto si el scan o trade están on
-            time.sleep(60)
+            # Dynamic sleep: ajustar para mantener ciclos de ~60s
+            elapsed = time.time() - cycle_start
+            sleep_time = max(0, 60 - elapsed)
+            time.sleep(sleep_time)
             
         except Exception as e:
             logging.error(f"Error crítico en loop principal: {e}")

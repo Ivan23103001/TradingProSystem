@@ -113,12 +113,20 @@ class TradingBrain:
     @staticmethod
     def initialize():
         """Inicializa el entorno, carga variables y valida la integridad del sistema."""
-        load_dotenv()
+        # NO llamar a load_dotenv() sin ruta ni override — backend/main.py ya lo hizo
+        # con override=True en la ruta correcta ANTES de cualquier import.
+        # Si se llama aquí, pisaría las variables con defaults (vacías) del CWD.
         env_mode = os.environ.get("TRADING_ENV", "dev").lower()
+        # Solo cargar archivos adicionales de entorno si existen
+        _dotenv_base = pathlib.Path(__file__).parent.parent
         if env_mode == "prod":
-            load_dotenv(".env.prod")
+            _prod_env = _dotenv_base / ".env.prod"
+            if _prod_env.exists():
+                load_dotenv(dotenv_path=_prod_env, override=True)
         elif env_mode == "dev":
-            load_dotenv(".env.dev")
+            _dev_env = _dotenv_base / ".env.dev"
+            if _dev_env.exists():
+                load_dotenv(dotenv_path=_dev_env, override=True)
             
         TradingBrain.check_integrity()
         logging.info(f"Cerebro Inicializado: Entorno validado (Modo: {env_mode}).")

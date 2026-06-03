@@ -1,25 +1,25 @@
-import sys
-import os
+# ═══════════════════════════════════════════════════════════════
+# ABSOLUTO PRIMERO: cargar .env antes de cualquier import
+# que pueda leer os.environ. Esto debe ejecutarse ANTES de
+# importar logging, fastapi, o cualquier módulo core.
+# ═══════════════════════════════════════════════════════════════
 import pathlib
-import logging
-from datetime import datetime
-
-# ═══════════════════════════════════════════════════════════════
-# Configurar logging ANTES de cualquier uso
-# ═══════════════════════════════════════════════════════════════
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# ═══════════════════════════════════════════════════════════════
-# PRIMERÍSIMO: cargar variables de entorno desde .env
-# Debe ejecutarse ANTES de cualquier importación de módulos locales
-# para que database, brain, etc. vean el entorno completo.
-# ═══════════════════════════════════════════════════════════════
+import os
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 _dotenv_path = _BASE_DIR / ".env"
-
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=_dotenv_path, override=True)
-logging.info(f"📝 ¿Existe .env? {_dotenv_path.exists()} — ruta: {_dotenv_path}")
+
+# ═══════════════════════════════════════════════════════════════
+# Ahora sí: el resto de imports y configuración
+# ═══════════════════════════════════════════════════════════════
+import sys
+import logging
+from datetime import datetime
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.info(f"📝 .env cargado: existe={_dotenv_path.exists()}, ruta={_dotenv_path}")
+_trading_vars_loaded = {k: f"***(len={len(v)})" for k, v in os.environ.items() if k.startswith("TRADING_")}
+logging.info(f"🔑 Variables TRADING_ cargadas: {_trading_vars_loaded}")
 
 # ═══════════════════════════════════════════════════════════════
 # Inyectar DB_FILE en el entorno del sistema operativo de forma

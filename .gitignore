@@ -32,6 +32,8 @@ ENV/
 
 # Database (Private trade history)
 *.db
+*.db-shm
+*.db-wal
 trade_history.db
 
 # Logs and temp
@@ -64,3 +66,6 @@ frontend/.env.production
 model_backups/
 frontend_broken/
 .agents/
+
+# ML Model signatures (generated at runtime)
+*.pkl.sig

@@ -14,8 +14,11 @@ except (ImportError, ValueError):
         get_ml_prediction = None
         calculate_ml_rolling_accuracy = None
 
+import threading
+
 _macro_cache = {"data": None, "ts": 0}
 _htf_cache = {}   # {ticker_symbol: {"bias": int, "ts": float}}
+_htf_cache_lock = threading.Lock()  # Protege acceso concurrente desde múltiples hilos
 _HTF_CACHE_MAX = 150  # Límite para evitar crecimiento indefinido en VPS 24/7
 
 def _safe(val, default=0.0):
@@ -337,7 +340,8 @@ def apply_strategy(df, spy_sentiment=None, ticker_symbol=None):
     htf_bias = 0  # 0 = neutral, 1 = alcista, -1 = bajista
     if ticker_symbol:
         import time as _time
-        cached_htf = _htf_cache.get(ticker_symbol, {})
+        with _htf_cache_lock:
+            cached_htf = _htf_cache.get(ticker_symbol, {})
         if cached_htf and (_time.time() - cached_htf.get("ts", 0)) < 3600:
             htf_bias = cached_htf["bias"]
         else:
@@ -348,20 +352,24 @@ def apply_strategy(df, spy_sentiment=None, ticker_symbol=None):
                     ema20_d = ta.trend.ema_indicator(daily_df['Close'], window=20)
                     ema50_d = ta.trend.ema_indicator(daily_df['Close'], window=50)
                     htf_bias = 1 if _safe(ema20_d.iloc[-1]) > _safe(ema50_d.iloc[-1]) else -1
-                    _htf_cache[ticker_symbol] = {"bias": htf_bias, "ts": _time.time()}
+                    with _htf_cache_lock:
+                        _htf_cache[ticker_symbol] = {"bias": htf_bias, "ts": _time.time()}
                 else:
-                    _htf_cache[ticker_symbol] = {"bias": 0, "ts": _time.time()}
+                    with _htf_cache_lock:
+                        _htf_cache[ticker_symbol] = {"bias": 0, "ts": _time.time()}
             except Exception:
                 htf_bias = 0
-                _htf_cache[ticker_symbol] = {"bias": 0, "ts": _time.time()}
+                with _htf_cache_lock:
+                    _htf_cache[ticker_symbol] = {"bias": 0, "ts": _time.time()}
 
     # Limpieza: evitar crecimiento indefinido en VPS (máx 150 tickers)
-    if len(_htf_cache) > _HTF_CACHE_MAX:
-        # Eliminar las entradas más antiguas (por timestamp) para volver al límite
-        sorted_keys = sorted(_htf_cache, key=lambda k: _htf_cache[k].get("ts", 0))
-        keys_to_remove = sorted_keys[:len(_htf_cache) - _HTF_CACHE_MAX]
-        for k in keys_to_remove:
-            del _htf_cache[k]
+    with _htf_cache_lock:
+        if len(_htf_cache) > _HTF_CACHE_MAX:
+            # Eliminar las entradas más antiguas (por timestamp) para volver al límite
+            sorted_keys = sorted(_htf_cache, key=lambda k: _htf_cache[k].get("ts", 0))
+            keys_to_remove = sorted_keys[:len(_htf_cache) - _HTF_CACHE_MAX]
+            for k in keys_to_remove:
+                del _htf_cache[k]
     bull_ob_win = data['Bullish_OB'].rolling(window=20, min_periods=1).max().shift(1)
     bear_ob_win = data['Bearish_OB'].rolling(window=20, min_periods=1).min().shift(1)
     bull_fvg_win = data['FVG_Bullish'].rolling(window=10, min_periods=1).max().shift(1)

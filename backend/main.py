@@ -960,14 +960,17 @@ for _route in app.router.routes:
     if not isinstance(_route, APIRoute):
         continue
     _path = _route.path
-    if _path.startswith("/api/") and not _path.startswith("/api/v1"):
+    # Guard idempotente: solo clonar rutas /api/ que NO contengan /api/v1 en ninguna posición
+    if _path.startswith("/api/") and "/api/v1" not in _path:
         _v1_path = _path.replace("/api/", "/api/v1/", 1)
-        _v1_router.add_api_route(
-            _v1_path,
-            endpoint=_route.endpoint,
-            methods=_route.methods,
-            response_model=_route.response_model,
-        )
+        # Evitar duplicación si la ruta ya existe
+        if not any(r.path == _v1_path for r in _v1_router.routes):
+            _v1_router.add_api_route(
+                _v1_path,
+                endpoint=_route.endpoint,
+                methods=_route.methods,
+                response_model=_route.response_model,
+            )
 
 app.include_router(_v1_router)
 logging.info(f"🔄 Router /api/v1 montado con {len(_v1_router.routes)} rutas clonadas.")

@@ -293,7 +293,7 @@ export default function Dashboard() {
     }
   };
 
-  const isPositive = data.change.startsWith("+");
+  const isPositive = data.change?.startsWith("+") ?? false;
   const isBuy = data.signal_text === "COMPRAR";
   const isSell = data.signal_text === "VENDER";
 
@@ -410,7 +410,7 @@ export default function Dashboard() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", width: "100%", fontSize: "11px", fontFamily: "monospace", marginTop: "2px" }}>
                 <span>{item.price}</span>
-                <span style={{ color: item.change.startsWith("+") ? "var(--green)" : "var(--red)" }}>{item.change}</span>
+                <span style={{ color: (item.change?.startsWith("+") ?? false) ? "var(--green)" : "var(--red)" }}>{item.change}</span>
               </div>
             </button>
           ))}
@@ -885,8 +885,8 @@ export default function Dashboard() {
                           </td>
                           <td style={{ padding: "10px", fontFamily: "monospace" }}>{pos.qty}</td>
                           <td style={{ padding: "10px", fontFamily: "monospace" }}>{pos.price}</td>
-                          <td style={{ padding: "10px", fontFamily: "monospace", color: pos.pnl.startsWith("+") ? "var(--green)" : "var(--red)", fontWeight: "bold" }}>{pos.pnl}</td>
-                          <td style={{ padding: "10px", fontFamily: "monospace", color: pos.pnl_pct.startsWith("+") ? "var(--green)" : "var(--red)", fontWeight: "bold" }}>{pos.pnl_pct}</td>
+                          <td style={{ padding: "10px", fontFamily: "monospace", color: (pos.pnl?.startsWith("+") ?? false) ? "var(--green)" : "var(--red)", fontWeight: "bold" }}>{pos.pnl}</td>
+                          <td style={{ padding: "10px", fontFamily: "monospace", color: (pos.pnl_pct?.startsWith("+") ?? false) ? "var(--green)" : "var(--red)", fontWeight: "bold" }}>{pos.pnl_pct}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -949,7 +949,7 @@ export default function Dashboard() {
                         <td style={{ 
                           padding: "10px", 
                           fontFamily: "monospace", 
-                          color: trade.pnl === "N/A" || !trade.pnl ? "var(--text-muted)" : trade.pnl.startsWith("-") ? "var(--red)" : "var(--green)", 
+                          color: trade.pnl === "N/A" || !trade.pnl ? "var(--text-muted)" : (trade.pnl?.startsWith("-") ?? false) ? "var(--red)" : "var(--green)",
                           fontWeight: "bold" 
                         }}>
                           {trade.pnl || "Abierta / En Curso"}

@@ -11,7 +11,8 @@ module.exports = {
       interpreter: "none",
       env_file: path.join(BASE_DIR, ".env"),
       env: {
-        PYTHONPATH: BASE_DIR
+        PYTHONPATH: BASE_DIR,
+        TRADING_ENV: "prod"
       }
     },
     {
@@ -21,7 +22,8 @@ module.exports = {
       interpreter: path.join(BASE_DIR, ".venv/bin/python"),
       env_file: path.join(BASE_DIR, ".env"),
       env: {
-        PYTHONPATH: BASE_DIR
+        PYTHONPATH: BASE_DIR,
+        TRADING_ENV: "prod"
       }
     }
   ]

@@ -45,7 +45,17 @@ def _analyze_ticker_parallel(ticker, period, interval, spy_sentiment):
     except Exception as e:
         return {"ticker": ticker, "da": None, "price": 0, "score": 50, "raw_signal": 0.0, "ml_conf": 50, "error": str(e)}
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Consola / PM2 logs
+        logging.handlers.RotatingFileHandler(
+            'app.log', maxBytes=10*1024*1024, backupCount=5,
+            encoding='utf-8'
+        )
+    ]
+)
 
 def main():
     from core.health_server import start_health_server, _state
@@ -54,6 +64,15 @@ def main():
     start_health_server(port=8001)
     init_db()
     load_env()
+
+    import uuid
+    import random
+    import string
+    def _new_correlation_id():
+        """Genera un correlation_id único para cada ciclo de trading."""
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        rand = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        return f"cycle-{ts}-{rand}"
     
     api_key = os.getenv("ALPACA_API_KEY", "")
     secret_key = os.getenv("ALPACA_SECRET_KEY", "")
@@ -130,6 +149,7 @@ def main():
 
     while True:
         cycle_start = time.time()
+        correlation_id = _new_correlation_id()
         try:
             config = get_config()
             auto_scan = config.get('auto_scan', False)
@@ -590,8 +610,20 @@ def main():
             # Persistir estado para recuperación tras crash/reinicio
             try:
                 save_bot_state(state_memory)
-            except Exception:
-                pass  # No bloquear el loop si la DB falla
+                # Resetear contador de fallos si la escritura fue exitosa
+                if state_memory.get("db_write_failures", 0) > 0:
+                    state_memory["db_write_failures"] = 0
+            except Exception as e:
+                state_memory["db_write_failures"] = state_memory.get("db_write_failures", 0) + 1
+                fail_count = state_memory["db_write_failures"]
+                logging.error(f"[{correlation_id}] Error persistiendo bot_state (fallo {fail_count}): {e}")
+                if fail_count >= 5:
+                    logging.critical(
+                        f"[{correlation_id}] CRÍTICO: {fail_count} fallos consecutivos escribiendo bot_state. "
+                        "Posible corrupción de BD o disco lleno."
+                    )
+                    if notifier:
+                        notifier.send_message(f"🚨 CRÍTICO: {fail_count} fallos al guardar estado del bot. Revisar DB/disco.")
             
             # Dynamic sleep: ajustar para mantener ciclos de ~60s
             elapsed = time.time() - cycle_start

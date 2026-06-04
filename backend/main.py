@@ -433,17 +433,54 @@ def get_config_endpoint():
 @app.post("/api/config")
 def save_config_endpoint(config: ConfigUpdate):
     try:
+        # Cargar configuración ANTERIOR para auditoría (antes de guardar)
+        old_config = TradingBrain.get_runtime_config()
+
         config_dict = config.dict()
         # Don't overwrite tickers if the new value is empty
         if not config_dict.get("tickers", "").strip():
-            existing = TradingBrain.get_runtime_config()
+            existing = old_config
             config_dict["tickers"] = existing.get("tickers", "SPY, QQQ, AAPL, TSLA, MSFT, NVDA, AMZN, GOOGL, META, AMD")
         # Clean up empty price limits
         if config_dict.get("long_max_price") == 0:
             config_dict["long_max_price"] = None
         if config_dict.get("short_min_price") == 0:
             config_dict["short_min_price"] = None
+
         TradingBrain.save_runtime_config(config_dict)
+
+        # ── Auditoría: calcular diff y registrar cambios ──
+        changed_fields = {}
+        for key, new_val in config_dict.items():
+            old_val = old_config.get(key) if old_config else None
+            if old_val != new_val:
+                changed_fields[key] = {"old": old_val, "new": new_val}
+
+        if changed_fields:
+            # Determinar severidad: si auto_trade cambió, es WARNING
+            severity = "WARNING" if "auto_trade" in changed_fields else "INFO"
+
+            from core.database import save_audit_log
+            save_audit_log(
+                event_type="CONFIG_CHANGE",
+                details={
+                    "changed_fields": changed_fields,
+                    "total_fields_changed": len(changed_fields)
+                },
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", ""),
+                severity=severity
+            )
+            logging.info(
+                f"📝 [AUDIT] Configuración actualizada: {len(changed_fields)} campo(s) modificado(s). "
+                f"IP: {request.client.host if request.client else 'N/A'}"
+            )
+            if severity == "WARNING":
+                logging.warning(
+                    f"⚠️ [AUDIT] ALERTA: auto_trade modificado! "
+                    f"IP: {request.client.host if request.client else 'N/A'}"
+                )
+
         return {"status": "ok", "config": config_dict}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

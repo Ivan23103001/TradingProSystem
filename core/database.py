@@ -67,12 +67,22 @@ def init_db(db_path=None):
                      (id INTEGER PRIMARY KEY CHECK (id = 1),
                       state_json TEXT NOT NULL,
                       updated_at TEXT NOT NULL)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS audit_log
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      timestamp TEXT NOT NULL,
+                      event_type TEXT NOT NULL,
+                      ip_address TEXT,
+                      user_agent TEXT,
+                      details_json TEXT,
+                      severity TEXT DEFAULT 'INFO')''')
         # Índices para consultas frecuentes
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_fecha ON trades(fecha)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_equity_fecha ON equity_history(fecha)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_log(event_type)''')
         conn.commit()
-        logging.info("✅ Base de datos inicializada: tablas trades, equity_history y bot_state listas.")
+        logging.info("✅ Base de datos inicializada: tablas trades, equity_history, bot_state y audit_log listas.")
     except Exception as e:
         logging.error(f"Error inicializando DB: {e}")
         # Si falla la inicialización, remover la conexión dañada del pool
@@ -276,3 +286,58 @@ def archive_old_trades(days_to_keep=90, db_path=None):
             logging.info(f"🧹 [DB Mantenimiento] Eliminados {deleted_trades} trades y {deleted_equity} registros de equity anteriores a {cutoff_date}.")
     except Exception as e:
         logging.error(f"Error durante el mantenimiento de la base de datos: {e}")
+
+
+def save_audit_log(event_type, details=None, ip_address=None, user_agent=None, severity="INFO", db_path=None):
+    """
+    Registra un evento de auditoría en la tabla audit_log.
+
+    Args:
+        event_type: Tipo de evento (ej. 'CONFIG_CHANGE', 'LOGIN', 'TRADE_EXECUTED', 'CIRCUIT_BREAKER')
+        details: Dict o string con información adicional del evento
+        ip_address: IP del cliente que originó el evento
+        user_agent: User-Agent del cliente
+        severity: Nivel de severidad ('INFO', 'WARNING', 'ERROR', 'CRITICAL')
+    """
+    import json
+    from datetime import datetime
+
+    path = db_path or DB_NAME
+    conn = get_connection(path)
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        details_json = json.dumps(details, default=str, ensure_ascii=False) if details else None
+        conn.execute(
+            "INSERT INTO audit_log (timestamp, event_type, ip_address, user_agent, details_json, severity) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (timestamp, event_type, ip_address, user_agent, details_json, severity)
+        )
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Error guardando audit_log [{event_type}]: {e}")
+
+
+def get_audit_logs(limit=100, event_type=None, db_path=None):
+    """
+    Obtiene los registros de auditoría más recientes.
+    Opcionalmente filtra por event_type.
+    """
+    import pandas as pd
+    path = db_path or DB_NAME
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    conn = get_connection(path)
+    try:
+        if event_type:
+            df = pd.read_sql_query(
+                "SELECT * FROM audit_log WHERE event_type = ? ORDER BY id DESC LIMIT ?",
+                conn, params=(event_type, limit)
+            )
+        else:
+            df = pd.read_sql_query(
+                f"SELECT * FROM audit_log ORDER BY id DESC LIMIT {limit}", conn
+            )
+        return df
+    except Exception as e:
+        logging.error(f"Error leyendo audit_log: {e}")
+        return pd.DataFrame()

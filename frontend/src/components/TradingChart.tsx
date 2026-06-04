@@ -9,7 +9,7 @@ import {
   LineStyle,
   createSeriesMarkers,
 } from "lightweight-charts";
-import { API_BASE } from "../apiConfig";
+import { API_BASE, fetchWithAuth } from "../apiConfig";
 
 interface TradingChartProps {
   ticker: string;
@@ -32,7 +32,7 @@ export default function TradingChart({ ticker, interval, period }: TradingChartP
 
     const fetchDataAndRender = async () => {
       try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
           `${API_BASE}/api/chart-data?ticker=${ticker}&interval=${interval}&period=${period}`
         );
         if (!response.ok) {

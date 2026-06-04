@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import TradingChart from "./TradingChart";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { API_BASE, API_KEY } from "../apiConfig";
+import { API_BASE, API_KEY, fetchWithAuth } from "../apiConfig";
 
 interface DashboardData {
   price: string;
@@ -149,7 +149,7 @@ export default function Dashboard() {
 
   // Load Main Dashboard data (useCallback para evitar recreación en cada render)
   const loadDashboardData = useCallback(() => {
-    fetch(`${API_BASE}/api/dashboard-state?ticker=${ticker}&interval=${interval}&period=${period}`)
+    fetchWithAuth(`${API_BASE}/api/dashboard-state?ticker=${ticker}&interval=${interval}&period=${period}`)
       .then((r) => r.json())
       .then((json) => {
         if (!json.error) {
@@ -168,7 +168,7 @@ export default function Dashboard() {
 
   // Refresh Market Map (useCallback para estabilidad de dependencias)
   const loadMarketMap = useCallback(() => {
-    fetch(`${API_BASE}/api/market-map?interval=${interval}&period=${period}`)
+    fetchWithAuth(`${API_BASE}/api/market-map?interval=${interval}&period=${period}`)
       .then((r) => r.json())
       .then((json) => {
         if (Array.isArray(json)) setMarketMap(json);
@@ -183,19 +183,19 @@ export default function Dashboard() {
   // Load Tab Content dynamically
   useEffect(() => {
     if (activeTab === "portfolio") {
-      fetch(`${API_BASE}/api/portfolio`)
+      fetchWithAuth(`${API_BASE}/api/portfolio`)
         .then((r) => r.json())
         .then((json) => setPortfolio(json))
         .catch(() => setPortfolio(null));
     } else if (activeTab === "history") {
-      fetch(`${API_BASE}/api/trade-history`)
+      fetchWithAuth(`${API_BASE}/api/trade-history`)
         .then((r) => r.json())
         .then((json) => {
           if (Array.isArray(json)) setTradeHistory(json);
         })
         .catch(() => setTradeHistory([]));
     } else if (activeTab === "status") {
-      fetch(`${API_BASE}/api/system-status`)
+      fetchWithAuth(`${API_BASE}/api/system-status`)
         .then((r) => r.json())
         .then((json) => setSystemStatus(json))
         .catch(() => setSystemStatus(null));
@@ -204,7 +204,7 @@ export default function Dashboard() {
 
   // Fetch config on mount
   useEffect(() => {
-    fetch(`${API_BASE}/api/config`)
+    fetchWithAuth(`${API_BASE}/api/config`)
       .then((r) => r.json())
       .then((c) => {
         setConfigWatchlist(c.tickers || "");
@@ -231,7 +231,7 @@ export default function Dashboard() {
     setScanning(true);
     setScanProgress(20);
     try {
-      const resp = await fetch(`${API_BASE}/api/run-scanner?interval=${interval}&period=${period}`, {
+      const resp = await fetchWithAuth(`${API_BASE}/api/run-scanner?interval=${interval}&period=${period}`, {
         method: "POST"
       });
       setScanProgress(70);
@@ -273,7 +273,7 @@ export default function Dashboard() {
         short_min_price: Number(configShortMinPrice)
       };
 
-      const resp = await fetch(`${API_BASE}/api/config`, {
+      const resp = await fetchWithAuth(`${API_BASE}/api/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
         body: JSON.stringify(payload)

@@ -87,6 +87,47 @@ Este documento detalla los mecanismos preventivos de seguridad y robustez del c�
 - **Implementación:** `bot_worker.py` filtra tickers inválidos en la comprensión de lista que construye la watchlist desde `bot_config.json`.
 - **Razón:** Previene fallos de parseo, peticiones malformadas a APIs externas, y posibles inyecciones de caracteres desde el archivo de configuración.
 
+### 14. Bloqueo de Archivos Sensibles en Nginx (v5.1)
+- **Regla:** Nginx NO debe servir archivos sensibles del proyecto bajo ninguna circunstancia. El bloque `location /` con `try_files` puede exponer accidentalmente `.env`, `.db`, `.git`, `*.py`, y `*.pkl`.
+- **Implementación:** Añadir bloques `location` con `deny all` antes del fallback SPA:
+  ```nginx
+  location ~ /\.(?!well-known) { deny all; return 404; }
+  location ~ \.(db|db-shm|db-wal|pkl|py|pyc|log)$ { deny all; return 404; }
+  location ~ /\.git { deny all; return 404; }
+  ```
+- **Verificación:** `curl http://localhost/.env` debe retornar 404, no el contenido del archivo.
+- **Razón:** Previene la fuga de API keys de Alpaca, tokens de Telegram, base de datos de trades y código fuente ante accesos no autorizados.
+
+### 15. Defensive Null Checks en el Frontend React (v5.1)
+- **Regla:** Todo acceso a propiedades de objetos provenientes de la API debe usar optional chaining (`?.`) y nullish coalescing (`??`) para evitar crashes por `undefined`.
+- **Implementación:** En `Dashboard.tsx`, 5 puntos críticos usan el patrón `(value?.startsWith("+") ?? false)`:
+  - `data.change` (KPIs de precio)
+  - `item.change` (Market Map)
+  - `pos.pnl` (Portfolio)
+  - `pos.pnl_pct` (Portfolio)
+  - `trade.pnl` (Trade History)
+- **Razón:** Si la API responde con un campo faltante o `undefined`, el componente no crashea con `Cannot read properties of undefined (reading 'startsWith')` y en su lugar usa el fallback `false`.
+
+### 16. Clonación Idempotente de Rutas /api/v1 (v5.1)
+- **Regla:** La clonación de rutas `/api/*` → `/api/v1/*` en `backend/main.py` debe ser idempotente para evitar la duplicación infinita `/api/v1/api/v1/api/v1/...` que ocurre cuando el módulo se recarga (PM2 restart, Uvicorn --reload).
+- **Implementación:** Doble guard en el loop de clonación:
+  ```python
+  if _path.startswith("/api/") and "/api/v1" not in _path:
+      _v1_path = _path.replace("/api/", "/api/v1/", 1)
+      if not any(r.path == _v1_path for r in _v1_router.routes):
+          _v1_router.add_api_route(...)
+  ```
+- **Razón:** El guard anterior `not _path.startswith("/api/v1")` fallaba porque el estado de `app.router.routes` persiste entre recargas, causando que rutas ya clonadas se clonaran de nuevo con prefijo adicional.
+
+### 17. Rate Limiting en Nginx (v5.1)
+- **Regla:** Nginx debe limitar la tasa de requests para proteger el backend contra sobrecarga (DDoS básico o bugs que generen bucles de peticiones).
+- **Implementación recomendada:**
+  ```nginx
+  limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+  limit_req zone=api_limit burst=20 nodelay;
+  ```
+- **Razón:** Uvicorn con 1 worker puede saturarse con requests simultáneos. El rate limiting en Nginx absorbe el impacto antes de que llegue al backend.
+
 ---
 > [!WARNING]
 > Cualquier cambio que modifique las librerías importadas, el guardado en base de datos o el entrenamiento del modelo de IA debe respetar obligatoriamente estos mecanismos de integridad.

@@ -40,3 +40,6 @@ El motor de features de ML ahora es completamente paramétrico y adapta la defin
 3. **Rollback Rápido:** Existe la utilidad `restore_model.py` en la raíz del proyecto para restaurar de inmediato el último backup válido (o uno específico pasado por parámetro) en caso de que el nuevo modelo presente fallos de precisión o rendimiento.
 4. **Firma HMAC-SHA256 (v5.1):** Tras `joblib.dump()`, el motor genera `ml_trading_model.pkl.sig` con firma HMAC-SHA256 derivada del machine-id del sistema. `get_ml_prediction()` ejecuta `_verify_integrity()` antes de `joblib.load()`. Modelos con firma inválida se rechazan retornando 50 (neutro).
 5. **Carga Segura de Modelos Legacy (v5.1):** `get_ml_prediction()` usa `saved.get('model')` con verificación explícita `if model is None` para evitar `KeyError` en dicts legacy corruptos. Modelos sin `'rf_model'` ni `'model'` se tratan como corruptos.
+
+## 🔗 Integración con API Backend (v5.1)
+- **Rutas /api/v1 Idempotentes:** Los endpoints de ML expuestos en `backend/main.py` (dashboard-state, chart-data, market-map, scanner) se clonan automáticamente a `/api/v1/*`. La clonación usa guard `"/api/v1" not in _path` + deduplicación para prevenir `/api/v1/api/v1/...`. Esto aplica también al health check del worker (`/health` en puerto 8001) que no se clona por estar en proceso separado.

@@ -80,7 +80,9 @@ class BrokerClient:
                 )
                 time.sleep(delay)
 
-        raise RuntimeError("Unreachable: _safe_api_call")
+        # Este punto es inalcanzable: el último intento del bucle siempre hace raise.
+        # Se mantiene solo para satisfacer analizadores estáticos de código.
+        raise RuntimeError("_safe_api_call: bucle de reintentos agotado (inesperado)")
 
     def _reset_degraded(self):
         """Resetea manualmente el flag de estado degradado."""
@@ -201,11 +203,11 @@ class BrokerClient:
         return 'MANUAL'
 
     def close_position(self, symbol):
-        """Cierra una posición abierta inmediatamente (market order de cierre)."""
+        """Cierra una posición abierta inmediatamente (market order de cierre + backoff)."""
         if not self.connected:
             return False, "Broker no conectado"
         try:
-            self.client.close_position(symbol)
+            self._safe_api_call(self.client.close_position, symbol)
             return True, f"Posición {symbol} cerrada exitosamente"
         except Exception as e:
             return False, f"Error cerrando {symbol}: {str(e)}"
@@ -272,7 +274,7 @@ class BrokerClient:
                                 stop_loss=sl_req,
                                 order_class=OrderClass.BRACKET
                             )
-                            order = self.client.submit_order(order_data=order_data)
+                            order = self._safe_api_call(self.client.submit_order, order_data=order_data)
                             emoji = "📈" if side == 'buy' else "📉"
                             return (
                                 True,
@@ -290,7 +292,7 @@ class BrokerClient:
                     side=order_side,
                     time_in_force=TimeInForce.DAY
                 )
-                order = self.client.submit_order(order_data=order_data)
+                order = self._safe_api_call(self.client.submit_order, order_data=order_data)
                 emoji = "📈" if side == 'buy' else "📉"
                 sw_warn = " ⚠️ MONITOREO SOFTWARE (bracket no soportado en notional)" if wants_bracket else ""
                 return (
@@ -312,7 +314,7 @@ class BrokerClient:
                     stop_loss=sl_req if wants_bracket else None,
                     order_class=OrderClass.BRACKET if wants_bracket else None
                 )
-                order = self.client.submit_order(order_data=order_data)
+                order = self._safe_api_call(self.client.submit_order, order_data=order_data)
                 emoji = "📈" if side == 'buy' else "📉"
                 bracket_info = f" (Bracket SL: ${stop_loss_price:.2f} / TP: ${take_profit_price:.2f})" if wants_bracket else ""
                 return (

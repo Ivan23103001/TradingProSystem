@@ -53,8 +53,12 @@ scratch/
 test_results.txt
 
 # Environment files
+.env
 .env.dev
 .env.local
+.env.prod
+.env.production
+frontend/.env.production
 
 # Backups and broken code
 model_backups/

@@ -431,7 +431,7 @@ def get_config_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/config")
-def save_config_endpoint(config: ConfigUpdate):
+def save_config_endpoint(config: ConfigUpdate, request: Request):
     try:
         # Cargar configuración ANTERIOR para auditoría (antes de guardar)
         old_config = TradingBrain.get_runtime_config()

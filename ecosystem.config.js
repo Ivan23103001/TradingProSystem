@@ -1,5 +1,5 @@
 const path = require("path");
-const BASE_DIR = "/root/TradingProSystem"; // Ajustar a la ruta real en tu VPS
+const BASE_DIR = "/var/www/TradingProSystem";
 
 module.exports = {
   apps: [

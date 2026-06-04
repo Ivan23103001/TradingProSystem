@@ -258,10 +258,36 @@ def _load_api_key():
 
 API_KEY = _load_api_key()
 
+# Endpoints que exponen datos financieros sensibles y requieren autenticación
+_SENSITIVE_ROUTES = {
+    "/api/config",
+    "/api/settings",
+    "/api/portfolio",
+    "/api/trade-history",
+    "/api/dashboard-state",
+    "/api/system-status",
+    "/api/chart-data",
+    "/api/market-map",
+}
+
 @app.middleware("http")
 async def api_key_auth_middleware(request: Request, call_next):
-    # Solo proteger endpoints POST /api/config y rutas sensibles
-    if request.url.path in ("/api/config",) and request.method == "POST":
+    # Proteger endpoints sensibles (tanto GET como POST, incluyendo /api/v1/*)
+    path = request.url.path.rstrip("/")
+    is_sensitive = (
+        path in _SENSITIVE_ROUTES or
+        any(path == route or path.startswith(route + "/") or path.startswith(route + "?")
+            for route in _SENSITIVE_ROUTES)
+    )
+    if not is_sensitive:
+        # Verificar también rutas /api/v1/* (ej. /api/v1/config → equivale a /api/config)
+        for route in _SENSITIVE_ROUTES:
+            v1_route = route.replace("/api/", "/api/v1/", 1)
+            if path == v1_route or path.startswith(v1_route + "/") or path.startswith(v1_route + "?"):
+                is_sensitive = True
+                break
+
+    if is_sensitive:
         if not API_KEY:
             return JSONResponse(
                 status_code=503,

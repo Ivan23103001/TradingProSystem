@@ -96,7 +96,9 @@ def init_db(db_path=None):
             del pool[path]
 
 
-def save_trade(ticker, tipo, precio, cantidad, score, db_path=None):
+from typing import Optional, Dict, Any
+
+def save_trade(ticker: str, tipo: str, precio: float, cantidad: float, score: int, db_path: Optional[str] = None) -> None:
     """Guarda un trade en la base de datos de forma segura."""
     from datetime import datetime
     conn = get_connection(db_path)
@@ -113,7 +115,7 @@ def save_trade(ticker, tipo, precio, cantidad, score, db_path=None):
         logging.error(f"Error guardando trade: {e}")
 
 
-def save_equity(equity, db_path=None):
+def save_equity(equity: float, db_path: Optional[str] = None) -> None:
     """Guarda un snapshot de equity en la base de datos."""
     from datetime import datetime
     conn = get_connection(db_path)
@@ -130,7 +132,7 @@ def save_equity(equity, db_path=None):
         logging.error(f"Error guardando equity: {e}")
 
 
-def get_trade_history(limit=500, db_path=None):
+def get_trade_history(limit: int = 500, db_path: Optional[str] = None) -> 'pd.DataFrame':
     """Obtiene el historial de trades más recientes."""
     import pandas as pd
     path = db_path or DB_NAME
@@ -147,7 +149,7 @@ def get_trade_history(limit=500, db_path=None):
         return pd.DataFrame()
 
 
-def get_equity_history(limit=1000, db_path=None):
+def get_equity_history(limit: int = 1000, db_path: Optional[str] = None) -> 'pd.DataFrame':
     """Obtiene el historial de equity más reciente."""
     import pandas as pd
     path = db_path or DB_NAME
@@ -164,7 +166,7 @@ def get_equity_history(limit=1000, db_path=None):
         return pd.DataFrame()
 
 
-def update_last_trade_pnl(ticker, exit_price, reason, db_path=None):
+def update_last_trade_pnl(ticker: str, exit_price: float, reason: str, db_path: Optional[str] = None) -> None:
     """
     Busca la última operación abierta para un ticker en la base de datos (pnl IS NULL)
     y calcula y guarda el PnL real usando el precio de salida y el motivo.

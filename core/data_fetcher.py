@@ -45,7 +45,10 @@ except Exception:
     pass
 
 
-def get_stock_data(ticker, period="1y", interval="1d"):
+from typing import Optional, Dict, Any, Tuple
+import pandas as pd
+
+def get_stock_data(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     """
     Descarga el historial de la acción de Yahoo Finance con Caché Universal.
     

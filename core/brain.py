@@ -19,54 +19,79 @@ DB_FILE = str(_BASE_DIR / "trade_history.db")
 
 class TradingBrain:
     """
-    EL CEREBRO CENTRAL (Brain Engine v1.0)
-    Garantiza que toda la información del bot esté sincronizada, validada y actualizada.
+    CEREBRO CENTRAL (Brain Engine v5.3)
+    Centraliza toda la configuración de trading, riesgo, timing y ML.
+    Actúa como fuente única de verdad para constantes del sistema.
+    
+    Secciones:
+      SECCIÓN 1 — Smart Money Concepts (SMC)
+      SECCIÓN 2 — Risk Management & Circuit Breakers
+      SECCIÓN 3 — Direction Control & Position Sizing
+      SECCIÓN 4 — Macro Sentiment (Regime Filters)
+      SECCIÓN 5 — Timing (Silver Bullet Windows)
+      SECCIÓN 6 — ML Thresholds
+      SECCIÓN 7 — Métodos Estáticos (Kill Switches, Sizing, Utilidades)
     """
     
-    # --- CONSTANTES TÉCNICAS (SMC & RISK) ---
-    # Centralizamos toda la "inteligencia" técnica aquí.
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 1 — Smart Money Concepts (SMC) — Microestructura
+    # ═══════════════════════════════════════════════════════════
     SMC_THRESHOLD_ATR = 1.5           # Multiplicador ATR para Order Blocks
     SMC_WICK_RATIO = 0.6              # Ratio de mecha para Liquidity Sweeps
     SMC_LOOKBACK = 20                 # Ventana de búsqueda de stops
     SMC_BREAKER_MULT = 1.2            # Multiplicador de volumen para Breakers
-    SMC_VOLUME_MULT = 1.8             # Multiplicador de volumen para detectar Imbalances institucionales
+    SMC_VOLUME_MULT = 1.8             # Multiplicador de volumen para Imbalances institucionales
 
-    
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 2 — Risk Management & Circuit Breakers
+    # ═══════════════════════════════════════════════════════════
     RISK_KELLY_FRACTION = 0.5         # Fracción de Kelly (Conservador)
     RISK_MIN_RR = 2.0                 # Ratio Riesgo/Beneficio mínimo
     RISK_VAR_CONFIDENCE = 0.95        # Nivel de confianza para VaR
-
+    
     MAX_CONCURRENT_POSITIONS = 5      # Límite de posiciones abiertas simultáneas
     DAILY_MAX_LOSS_PCT = 0.03         # Circuit breaker: pérdida máxima diaria (3%)
     WEEKLY_MAX_LOSS_PCT = 0.05        # Cuarentena: pérdida máxima semanal (5%)
     MINIMUM_TRADE_USD = 50            # Mínimo absoluto por operación
     MAX_POSITION_EQUITY_PCT = 0.25    # Máximo 25% del buying power por posición
-    ATR_BASE_PERCENT = 0.02           # ATR base ideal (2% del precio) para calcular Target Volatility Sizing
+    ATR_BASE_PERCENT = 0.02           # ATR base ideal (2% del precio) para Target Volatility Sizing
 
-
-    # VIX < 15 → umbral 60, VIX < 22 → umbral 65, VIX >= 22 → umbral 75
-    VIX_SCORE_THRESHOLDS = [(15, 60), (22, 65), (99, 75)]
-
-    # --- DIRECTION CONTROL ---
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 3 — Direction Control & Position Sizing
+    # ═══════════════════════════════════════════════════════════
     DIRECTION_MODE = "BOTH"            # "LONG_ONLY" | "SHORT_ONLY" | "BOTH"
     LONG_AMOUNT_USD = 100.0            # Monto por defecto para operaciones LONG
     SHORT_AMOUNT_USD = 50.0            # Monto por defecto para operaciones SHORT
     LONG_MAX_ENTRY_PRICE = None        # Precio máximo para entrar en LONG (None = sin límite)
     SHORT_MIN_ENTRY_PRICE = None       # Precio mínimo para entrar en SHORT (None = sin límite)
     USE_FRACTIONAL = True              # Soporte de acciones fraccionarias vía notional
-    
-    # --- MACRO SENTIMENT (Regimes) ---
+
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 4 — Macro Sentiment (Regime Filters)
+    # ═══════════════════════════════════════════════════════════
     MACRO_VIX_MAX = 22.5              # Umbral de "pánico" (No Longs)
     MACRO_DXY_REDUCTION = 0.4         # Reducción de posición si DXY es fuerte
     
-    # --- SILVER BULLET WINDOWS (EST) ---
+    # VIX < 15 → umbral 60, VIX < 22 → umbral 65, VIX >= 22 → umbral 75
+    VIX_SCORE_THRESHOLDS = [(15, 60), (22, 65), (99, 75)]
+
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 5 — Timing (Silver Bullet Windows, EST)
+    # ═══════════════════════════════════════════════════════════
     TIME_WINDOWS = [
         ("10:00", "11:00"),           # Ventana Mañana (Equity)
         ("14:00", "15:00")            # Ventana Tarde (Power Hour)
     ]
-    
+
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 6 — ML Thresholds (Ensamble Adaptativo)
+    # ═══════════════════════════════════════════════════════════
     ML_THRESHOLD_BULL = 65            # Umbral de IA para señal de compra
     ML_THRESHOLD_BEAR = 35            # Umbral de IA para señal de venta
+
+    # ═══════════════════════════════════════════════════════════
+    # SECCIÓN 7 — Métodos Estáticos
+    # ═══════════════════════════════════════════════════════════
     
     @staticmethod
     def check_kill_switches(current_equity, day_start_equity, week_start_equity):

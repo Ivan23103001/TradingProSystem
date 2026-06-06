@@ -94,124 +94,36 @@ logging.info(f"📍 DB_FILE global: {DB_FILE}")
 
 
 def _init_all_modules():
-    """Inicializa TODOS los módulos core en background (sin bloquear el bind de Uvicorn).
-    Ultra-resiliente: incluso un crash total de imports no congela el backend."""
-    global get_stock_data, get_cache_stats
-    global apply_strategy, get_spy_sentiment, is_market_open
-    global BrokerClient, init_db, get_trade_history
-    global calculate_ml_rolling_accuracy, TradingBrain, DB_FILE
-    global _init_ok, _init_errors
+    """Inicializa TODOS los módulos core delegando en backend.init_modules."""
+    global get_stock_data, get_cache_stats, apply_strategy, get_spy_sentiment
+    global is_market_open, BrokerClient, init_db, get_trade_history
+    global calculate_ml_rolling_accuracy, TradingBrain, DB_FILE, _init_ok, _init_errors
 
-    # ═══════════════════════════════════════════════════════════
-    # RE-LECTURA EXPLÍCITA de DB_FILE desde os.environ.
-    # Esto asegura que incluso si el hilo hijo tiene un entorno
-    # diferente, usamos el valor inyectado al inicio del proceso.
-    # ═══════════════════════════════════════════════════════════
-    DB_FILE = os.environ.get("DB_FILE", str(_BASE_DIR / "trade_history.db"))
-    logging.info(f"🔄 DB_FILE re-leído del entorno: {DB_FILE}")
+    from backend.init_modules import init_all_modules
 
-    errors = []
+    result = init_all_modules(_BASE_DIR)
+    m = result["modules"]
 
-    try:
-        # ── data_fetcher ──
-        try:
-            from core.data_fetcher import get_stock_data as gsd, get_cache_stats as gcs
-            get_stock_data, get_cache_stats = gsd, gcs
-            logging.info("✅ data_fetcher cargado.")
-        except Exception as e:
-            errors.append(f"data_fetcher: {e}")
-            logging.error(f"data_fetcher falló: {e}")
+    get_stock_data = m["get_stock_data"]
+    get_cache_stats = m["get_cache_stats"]
+    apply_strategy = m["apply_strategy"]
+    get_spy_sentiment = m["get_spy_sentiment"]
+    is_market_open = m["is_market_open"]
+    BrokerClient = m["BrokerClient"]
+    init_db = m["init_db"]
+    get_trade_history = m["get_trade_history"]
+    calculate_ml_rolling_accuracy = m["calculate_ml_rolling_accuracy"]
+    TradingBrain = m["TradingBrain"]
+    DB_FILE = result["db_file"]
 
-        # ── strategy ──
-        try:
-            from core.strategy import apply_strategy as ap, get_spy_sentiment as gss
-            apply_strategy, get_spy_sentiment = ap, gss
-            logging.info("✅ strategy cargado.")
-        except Exception as e:
-            errors.append(f"strategy: {e}")
-            logging.error(f"strategy falló: {e}")
+    _init_ok = result["ok"]
+    _init_errors = result["errors"]
 
-        # ── simulator ──
-        try:
-            from core.simulator import is_market_open as imo
-            is_market_open = imo
-            logging.info("✅ simulator cargado.")
-        except Exception as e:
-            errors.append(f"simulator: {e}")
-            logging.error(f"simulator falló: {e}")
-
-        # ── broker ──
-        try:
-            from core.broker import BrokerClient as BC
-            BrokerClient = BC
-            logging.info("✅ broker cargado.")
-        except Exception as e:
-            errors.append(f"broker: {e}")
-            logging.error(f"broker falló: {e}")
-
-        # ── brain (DEBE ir ANTES que database para que DB_FILE esté sincronizado) ──
-        try:
-            from core.brain import TradingBrain as TB, DB_FILE as BRAIN_DB_FILE
-            TradingBrain = TB
-            # Si brain tiene una ruta diferente y el entorno no la tenía,
-            # usamos la de brain como fuente de verdad.
-            if not os.environ.get("DB_FILE"):
-                DB_FILE = BRAIN_DB_FILE
-                os.environ["DB_FILE"] = DB_FILE
-            logging.info(f"✅ brain importado (DB_FILE={BRAIN_DB_FILE}).")
-            if TradingBrain:
-                TradingBrain.initialize()
-                logging.info("✅ TradingBrain inicializado.")
-        except Exception as e:
-            errors.append(f"brain: {e}")
-            logging.error(f"brain falló: {e}")
-
-        # ── database (AHORA con DB_FILE ya resuelto desde brain/entorno) ──
-        try:
-            from core.database import init_db as idb, get_trade_history as gth
-            init_db, get_trade_history = idb, gth
-            if init_db:
-                logging.info(f"Inicializando base de datos... (DB_FILE={DB_FILE})")
-                # Pasar DB_FILE explícitamente — no depender de defaults del módulo
-                init_db(DB_FILE)
-                # Verificar que la DB se creó
-                if DB_FILE and os.path.exists(DB_FILE):
-                    logging.info(f"✅ database inicializada — DB existe en {DB_FILE}")
-                else:
-                    logging.warning(f"database inicializada pero DB_FILE={DB_FILE} no encontrada en disco.")
-            else:
-                errors.append("database: init_db es None")
-                logging.error("database: init_db es None tras import.")
-        except Exception as e:
-            errors.append(f"database: {e}")
-            logging.error(f"database falló: {e}")
-
-        # ── ml_engine ──
-        try:
-            from core.ml_engine import calculate_ml_rolling_accuracy as cml
-            calculate_ml_rolling_accuracy = cml
-            logging.info("✅ ml_engine cargado.")
-        except Exception as e:
-            errors.append(f"ml_engine: {e}")
-            logging.error(f"ml_engine falló: {e}")
-
-    except Exception as e:
-        # Catch-all: NUNCA dejar que el hilo muera en silencio
-        errors.append(f"CRITICAL_UNHANDLED: {e}")
-        logging.critical(f"CRITICAL INIT ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # ── SIEMPRE marcamos como terminado (aunque haya errores) ──
-    if errors:
-        _init_ok = False
-        _init_errors = errors
-        msg = " | ".join(errors)
+    if not result["ok"]:
+        msg = " | ".join(result["errors"])
         logging.error(f"Errores durante inicialización: {msg}")
-        logging.warning(f"Inicialización parcial — {len(errors)} módulo(s) con error. Uvicorn sigue activo.")
+        logging.warning(f"Inicialización parcial — {len(result['errors'])} módulo(s) con error. Uvicorn sigue activo.")
     else:
-        _init_ok = True
-        _init_errors = []
         logging.info(f"✅ Backend inicializado correctamente — {7} módulos cargados.")
 
     _init_done.set()

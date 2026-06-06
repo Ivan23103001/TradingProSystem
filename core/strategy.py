@@ -265,7 +265,9 @@ def calculate_var(df, confidence=0.95):
     var = mu - (1.645 * sigma) if confidence == 0.95 else mu - (2.33 * sigma)
     return abs(var)
 
-def apply_strategy(df, spy_sentiment=None, ticker_symbol=None):
+from typing import Optional, List, Dict, Any, Tuple
+
+def apply_strategy(df: pd.DataFrame, spy_sentiment: Optional[int] = None, ticker_symbol: Optional[str] = None) -> pd.DataFrame:
     """
     Motor Cuantitativo v4.2 (ML Ensemble Revolution).
     Ensamble de Heurísticas + OB + Sweeps + ML Prediction + Dynamic Risk.

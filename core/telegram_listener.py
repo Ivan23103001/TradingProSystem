@@ -64,13 +64,11 @@ class TelegramListener:
                                 f"Telegram Bloqueado: Mensaje no autorizado de Chat ID {chat_id}. "
                                 f"Contenido: '{text[:15]}...'"
                             )
-                            # Ignorar por completo por motivos de seguridad
                             continue
 
                         # Procesar comando válido
                         self._handle_command(chat_id, text)
             except requests.exceptions.RequestException as e:
-                # Error de red temporal, dormir y reintentar
                 logging.debug(f"Error temporal de red en Telegram getUpdates: {e}")
                 time.sleep(5)
             except Exception as e:
@@ -82,14 +80,14 @@ class TelegramListener:
         
         if command in ("/start", "/ayuda", "/help"):
             response = (
-                "🤖 *¡Bienvenido a TradingProSystem Bot!*\n\n"
+                "🤖 <b>¡Bienvenido a TradingProSystem Bot!</b>\n\n"
                 "Este bot te permite monitorear y consultar tu sistema de trading en tiempo real de forma segura.\n\n"
-                "📌 *Comandos Disponibles:*\n"
-                "🔹 `/estado` - Muestra la salud del sistema y configuraciones activas.\n"
-                "🔹 `/historial_hoy` - Lista las transacciones completadas hoy con su PnL.\n"
-                "🔹 `/balance` o `/posiciones` - Consulta fondos, poder de compra y posiciones abiertas en Alpaca.\n"
-                "🔹 `/ayuda` - Muestra este menú informativo.\n\n"
-                "🔒 *Nota de Seguridad*: Tu chat está verificado y restringido exclusivamente para tu ID de usuario."
+                "📌 <b>Comandos Disponibles:</b>\n"
+                "🔹 <code>/estado</code> - Muestra la salud del sistema y configuraciones activas.\n"
+                "🔹 <code>/historial_hoy</code> - Lista las transacciones completadas hoy con su PnL.\n"
+                "🔹 <code>/balance</code> o <code>/posiciones</code> - Consulta fondos, poder de compra y posiciones abiertas en Alpaca.\n"
+                "🔹 <code>/ayuda</code> - Muestra este menú informativo.\n\n"
+                "🔒 <b>Nota de Seguridad:</b> Tu chat está verificado y restringido exclusivamente para tu ID de usuario."
             )
             self.send_reply(chat_id, response)
 
@@ -103,7 +101,7 @@ class TelegramListener:
             self._cmd_balance_posiciones(chat_id)
 
         else:
-            response = "❓ *Comando no reconocido.* Escribe `/ayuda` para ver la lista de comandos disponibles."
+            response = "❓ <b>Comando no reconocido.</b> Escribe <code>/ayuda</code> para ver la lista de comandos disponibles."
             self.send_reply(chat_id, response)
 
     def _cmd_estado(self, chat_id):
@@ -127,13 +125,13 @@ class TelegramListener:
             last_scan_str = last_scan if last_scan else "Ninguno aún"
             
             response = (
-                "🖥️ *Estado del Sistema TradingProSystem*\n\n"
-                f"🤖 *Auto-Trade*: {'🟢 Encendido (Operando)' if auto_trade else '🔴 Apagado (Simulación/Pausa)'}\n"
-                f"🔍 *Auto-Scan*: {'🟢 Activo' if auto_scan else '🔴 Inactivo'}\n"
-                f"💼 *Broker Alpaca*: {broker_status}\n"
-                f"⏰ *Uptime del Worker*: `{uptime_str}`\n"
-                f"🎯 *Último Escaneo*: `{last_scan_str}`\n"
-                f"📈 *Trades en Sesión*: `{_state.get('total_trades_session', 0)}`"
+                "🖥️ <b>Estado del Sistema TradingProSystem</b>\n\n"
+                f"🤖 <b>Auto-Trade:</b> {'🟢 Encendido (Operando)' if auto_trade else '🔴 Apagado (Simulación/Pausa)'}\n"
+                f"🔍 <b>Auto-Scan:</b> {'🟢 Activo' if auto_scan else '🔴 Inactivo'}\n"
+                f"💼 <b>Broker Alpaca:</b> {broker_status}\n"
+                f"⏰ <b>Uptime del Worker:</b> <code>{uptime_str}</code>\n"
+                f"🎯 <b>Último Escaneo:</b> <code>{last_scan_str}</code>\n"
+                f"📈 <b>Trades en Sesión:</b> <code>{_state.get('total_trades_session', 0)}</code>"
             )
             self.send_reply(chat_id, response)
         except Exception as e:
@@ -153,10 +151,10 @@ class TelegramListener:
             rows = cursor.fetchall()
             
             if not rows:
-                self.send_reply(chat_id, f"📭 *Historial:* No se han registrado operaciones hoy (`{hoy}`).")
+                self.send_reply(chat_id, f"📭 <b>Historial:</b> No se han registrado operaciones hoy (<code>{hoy}</code>).")
                 return
                 
-            response = f"📊 *Historial de operaciones de hoy ({hoy}):*\n\n"
+            response = f"📊 <b>Historial de operaciones de hoy ({hoy}):</b>\n\n"
             total_pnl = 0.0
             pnl_count = 0
             
@@ -168,22 +166,22 @@ class TelegramListener:
                     pnl_val = float(pnl)
                     total_pnl += pnl_val
                     pnl_count += 1
-                    pnl_str = f"💵 PnL: *${pnl_val:+.2f}*"
+                    pnl_str = f"💵 PnL: <b>${pnl_val:+.2f}</b>"
                 else:
-                    pnl_str = "💵 PnL: *N/A (Abierta)*"
+                    pnl_str = "💵 PnL: <b>N/A (Abierta)</b>"
                     
                 emoji = "🟢 LONG (Compra)" if "LONG" in tipo or "buy" in tipo.lower() else "🔴 SHORT (Venta)"
                 hora = fecha.split()[1] if " " in fecha else fecha
                 
                 response += (
-                    f"🔹 *{ticker}* | {emoji} a las `{hora}`\n"
-                    f"  • Precio: `${precio:,.2f}` | Cant: `{cantidad}`\n"
-                    f"  • Score Estrategia: `{score}/100`\n"
+                    f"🔹 <b>{ticker}</b> | {emoji} a las <code>{hora}</code>\n"
+                    f"  • Precio: <code>${precio:,.2f}</code> | Cant: <code>{cantidad}</code>\n"
+                    f"  • Score Estrategia: <code>{score}/100</code>\n"
                     f"  • {pnl_str}\n\n"
                 )
                 
             if pnl_count > 0:
-                response += f"🏁 *PnL Acumulado Cerrado Hoy:* ` ${total_pnl:+.2f} `"
+                response += f"🏁 <b>PnL Acumulado Cerrado Hoy:</b> <code>${total_pnl:+.2f}</code>"
             
             self.send_reply(chat_id, response)
         except Exception as e:
@@ -207,18 +205,18 @@ class TelegramListener:
             status = acc.get("status", "Unknown")
             
             response = (
-                "💼 *Cartera y Balance en Alpaca*\n\n"
-                f"💳 *Capital Total (Equity)*: `${equity:,.2f}`\n"
-                f"💵 *Poder de Compra*: `${buying_power:,.2f}`\n"
-                f"🚦 *Estado Cuenta*: `{status}`\n\n"
+                "💼 <b>Cartera y Balance en Alpaca</b>\n\n"
+                f"💳 <b>Capital Total (Equity):</b> <code>${equity:,.2f}</code>\n"
+                f"💵 <b>Poder de Compra:</b> <code>${buying_power:,.2f}</code>\n"
+                f"🚦 <b>Estado Cuenta:</b> <code>{status}</code>\n\n"
             )
             
             # 2. Consultar posiciones
             positions = self.broker_client.get_open_positions()
             if not positions:
-                response += "📭 *Posiciones Abiertas*: Ninguna posición activa."
+                response += "📭 <b>Posiciones Abiertas:</b> Ninguna posición activa."
             else:
-                response += "📌 *Posiciones Activas:*\n\n"
+                response += "📌 <b>Posiciones Activas:</b>\n\n"
                 for p in positions:
                     symbol = p.get("symbol")
                     qty = p.get("qty", 0.0)
@@ -231,9 +229,9 @@ class TelegramListener:
                     pl_emoji = "📈" if unrealized_pl >= 0 else "📉"
                     
                     response += (
-                        f"{side_emoji} *{symbol}* ({side})\n"
-                        f"  • Cantidad: `{qty}` | Valor: `${mkt_val:,.2f}`\n"
-                        f"  • PnL Flotante: {pl_emoji} *${unrealized_pl:+.2f}* (`{unrealized_plpc:+.2f}%`)\n\n"
+                        f"{side_emoji} <b>{symbol}</b> ({side})\n"
+                        f"  • Cantidad: <code>{qty}</code> | Valor: <code>${mkt_val:,.2f}</code>\n"
+                        f"  • PnL Flotante: {pl_emoji} <b>${unrealized_pl:+.2f}</b> (<code>{unrealized_plpc:+.2f}%</code>)\n\n"
                     )
                     
             self.send_reply(chat_id, response)
@@ -242,13 +240,13 @@ class TelegramListener:
             self.send_reply(chat_id, f"❌ Error al consultar la cartera de Alpaca: {str(e)}")
 
     def send_reply(self, chat_id, text):
-        """Envía una respuesta de vuelta al chat en formato Markdown."""
+        """Envía una respuesta de vuelta al chat en formato HTML."""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             payload = {
                 "chat_id": chat_id,
                 "text": text,
-                "parse_mode": "MarkdownV2"
+                "parse_mode": "HTML"
             }
             res = self.session.post(url, json=payload, timeout=10)
             if res.status_code != 200:

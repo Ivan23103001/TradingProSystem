@@ -500,7 +500,7 @@ class TelegramListener:
     # ═══════════════════════════════════════════════════════════════
 
     def _cmd_chart(self, chat_id, args):
-        """Genera y envía un gráfico de velas con EMAs + volumen."""
+        """Genera y envía un gráfico profesional de velas japonesas con EMAs + volumen."""
         try:
             ticker = args[0].upper().strip() if args else "SPY"
             self.send_reply(chat_id, f"📊 Generando gráfico para <b>{ticker}</b>...")
@@ -515,55 +515,132 @@ class TelegramListener:
                 return
 
             df_a = apply_strategy(df, spy_sentiment=spy_sent, ticker_symbol=ticker)
-            # Usar últimos 100 puntos para que el gráfico sea legible
-            plot_data = df_a.tail(100)
+            plot_data = df_a.tail(60)  # 60 velas = ~15 horas de trading
 
             import matplotlib
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
             import matplotlib.dates as mdates
+            import matplotlib.patches as mpatches
+            from matplotlib.lines import Line2D
             from io import BytesIO
+            import numpy as np
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
-            fig.patch.set_facecolor('#1a1a2e')
-            ax1.set_facecolor('#1a1a2e')
-            ax2.set_facecolor('#1a1a2e')
+            # ── Configurar figura ──
+            fig = plt.figure(figsize=(12, 8))
+            fig.patch.set_facecolor('#131722')
 
-            # Panel superior — Velas + EMAs
-            colors = ['#00ff88' if plot_data['Close'].iloc[i] >= plot_data['Open'].iloc[i] else '#ff4466' for i in range(len(plot_data))]
-            ax1.bar(plot_data.index, plot_data['High'] - plot_data['Low'], bottom=plot_data['Low'], width=0.0003, color=colors, linewidth=0)
-            ax1.bar(plot_data.index, abs(plot_data['Close'] - plot_data['Open']), bottom=plot_data[['Open','Close']].min(axis=1), width=0.0005, color=colors, linewidth=0)
+            # Panel de velas (ocupa 65% superior)
+            ax_candle = fig.add_axes([0.07, 0.30, 0.90, 0.65])
+            ax_candle.set_facecolor('#131722')
+            ax_candle.yaxis.tick_right()
+            ax_candle.yaxis.set_label_position("right")
 
+            # Panel de volumen (ocupa 15% inferior)
+            ax_vol = fig.add_axes([0.07, 0.12, 0.90, 0.15], sharex=ax_candle)
+            ax_vol.set_facecolor('#131722')
+            ax_vol.yaxis.tick_right()
+            ax_vol.yaxis.set_label_position("right")
+
+            # ── Dibujar velas japonesas reales ──
+            body_width = 0.0004  # Ancho del cuerpo
+            for i in range(len(plot_data)):
+                dt = mdates.date2num(plot_data.index[i])
+                o, h, l, c = plot_data['Open'].iloc[i], plot_data['High'].iloc[i], plot_data['Low'].iloc[i], plot_data['Close'].iloc[i]
+                bullish = c >= o
+                color = '#26a69a' if bullish else '#ef5350'
+                edge_color = '#1b7a6e' if bullish else '#c62828'
+
+                # Mecha (sombra) — línea vertical fina
+                ax_candle.plot([dt, dt], [l, h], color=edge_color, linewidth=1.0, solid_capstyle='round')
+
+                # Cuerpo — rectángulo
+                body_bottom = o if bullish else c
+                body_height = abs(c - o)
+                if body_height < 0.0001:
+                    body_height = max(h - l, 0.01) * 0.01  # Doji: línea fina
+                rect = mpatches.Rectangle(
+                    (dt - body_width/2, body_bottom), body_width, body_height,
+                    facecolor=color if body_height > 0.001 else edge_color,
+                    edgecolor=edge_color, linewidth=0.5, zorder=3
+                )
+                ax_candle.add_patch(rect)
+
+            # ── EMAs ──
             if 'EMA_20' in plot_data.columns:
-                ax1.plot(plot_data.index, plot_data['EMA_20'], color='#ffaa00', linewidth=1, label='EMA 20')
+                ax_candle.plot(plot_data.index, plot_data['EMA_20'], color='#FF9800', linewidth=1.2, label='EMA 20', zorder=4)
             if 'EMA_50' in plot_data.columns:
-                ax1.plot(plot_data.index, plot_data['EMA_50'], color='#ff66aa', linewidth=1, label='EMA 50')
+                ax_candle.plot(plot_data.index, plot_data['EMA_50'], color='#E91E63', linewidth=1.2, label='EMA 50', zorder=4)
             if 'EMA_200' in plot_data.columns:
-                ax1.plot(plot_data.index, plot_data['EMA_200'], color='#66aaff', linewidth=1, label='EMA 200')
+                ax_candle.plot(plot_data.index, plot_data['EMA_200'], color='#42A5F5', linewidth=1.2, label='EMA 200', zorder=4)
 
-            ax1.set_title(f'{ticker} — {plot_data.index[0].strftime("%m/%d")} a {plot_data.index[-1].strftime("%m/%d %H:%M")}', color='white', fontsize=12)
-            ax1.legend(loc='upper left', fontsize=7, facecolor='#1a1a2e', edgecolor='#333', labelcolor='white')
-            ax1.tick_params(colors='#888')
-            ax1.grid(alpha=0.15, color='white')
+            # ── Leyenda ──
+            legend = ax_candle.legend(loc='upper left', fontsize=7, facecolor='#1e2233', edgecolor='#2a2e3e', labelcolor='#ccc', framealpha=0.9)
+            legend.get_frame().set_linewidth(0.5)
 
-            # Panel inferior — Volumen
-            vol_colors = ['#00ff88' if plot_data['Close'].iloc[i] >= plot_data['Open'].iloc[i] else '#ff4466' for i in range(len(plot_data))]
-            ax2.bar(plot_data.index, plot_data['Volume'], color=vol_colors, width=0.0005, alpha=0.5)
-            ax2.set_ylabel('Vol', color='#888', fontsize=8)
-            ax2.tick_params(colors='#888')
-            ax2.grid(alpha=0.15, color='white')
+            # ── Volumen ──
+            vol_colors = ['#26a69a' if plot_data['Close'].iloc[i] >= plot_data['Open'].iloc[i] else '#ef5350' for i in range(len(plot_data))]
+            ax_vol.bar(plot_data.index, plot_data['Volume'], color=vol_colors, width=0.0004, alpha=0.45, linewidth=0)
+            ax_vol.set_ylabel('Volumen', color='#666', fontsize=7, labelpad=5)
+            ax_vol.tick_params(colors='#555', labelsize=6)
 
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
-            plt.xticks(rotation=45, ha='right', fontsize=7, color='#888')
-            plt.tight_layout()
+            # ── Configurar ejes de velas ──
+            ax_candle.tick_params(colors='#555', labelsize=7)
+            ax_candle.grid(axis='y', alpha=0.08, color='white', linewidth=0.5)
+            ax_candle.set_ylabel('Precio (USD)', color='#666', fontsize=7, labelpad=5)
 
-            # Guardar en memoria
+            # ── Formatear eje X (fechas/horas) ──
+            for ax in [ax_candle, ax_vol]:
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%a %d\n%H:%M'))
+                ax.tick_params(axis='x', colors='#555', labelsize=6)
+                ax.grid(axis='x', alpha=0.05, color='white', linewidth=0.5)
+
+            # ── Línea de precio actual ──
+            last_price = float(plot_data['Close'].iloc[-1])
+            ax_candle.axhline(y=last_price, color='#FFD700', linewidth=0.8, linestyle='--', alpha=0.6, zorder=2)
+
+            # ── Info Box en la parte superior ──
+            score = int(plot_data['Score'].iloc[-1]) if 'Score' in plot_data.columns else 50
+            ml_pred = df_a.attrs.get('ml_prediction', 50)
+            scenario = plot_data['Market_Scenario'].iloc[-1] if 'Market_Scenario' in plot_data.columns else "Estándar"
+
+            first_price = float(plot_data['Close'].iloc[0])
+            change_pct = ((last_price - first_price) / first_price) * 100
+            change_color = '#26a69a' if change_pct >= 0 else '#ef5350'
+            change_sign = '+' if change_pct >= 0 else ''
+
+            if score >= 65:
+                signal_text = "🟢 COMPRA"
+                signal_color = '#26a69a'
+            elif score <= 35:
+                signal_text = "🔴 VENTA"
+                signal_color = '#ef5350'
+            else:
+                signal_text = "⚪ NEUTRAL"
+                signal_color = '#888'
+
+            info_text = (
+                f"  {ticker}    │    ${last_price:,.2f}    │    {change_sign}{change_pct:.2f}%"
+                f"    │    Score: {score}/100 {signal_text}"
+            )
+            fig.text(0.5, 0.965, info_text, transform=fig.transFigure,
+                     fontsize=10, fontweight='bold', color='white',
+                     fontfamily='monospace', ha='center', va='top',
+                     bbox=dict(boxstyle='round,pad=0.4', facecolor='#1e2233',
+                               edgecolor='#2a2e3e', linewidth=1, alpha=0.95))
+
+            # ── Subtítulo con escenario y ML ──
+            sub_text = f"Escenario: {scenario}    │    ML: {ml_pred}%    │    {plot_data.index[0].strftime('%m/%d')} → {plot_data.index[-1].strftime('%m/%d %H:%M')}"
+            fig.text(0.5, 0.935, sub_text, transform=fig.transFigure,
+                     fontsize=7, color='#888', fontfamily='monospace', ha='center', va='top')
+
+            # ── Guardar en memoria ──
             buf = BytesIO()
-            plt.savefig(buf, format='png', dpi=120, facecolor='#1a1a2e', bbox_inches='tight')
+            plt.savefig(buf, format='png', dpi=130, facecolor='#131722', bbox_inches='tight', pad_inches=0.3)
             buf.seek(0)
             plt.close(fig)
 
-            # Enviar foto a Telegram
+            # ── Enviar a Telegram ──
             url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
             files = {'photo': (f'{ticker}_chart.png', buf, 'image/png')}
             data = {'chat_id': chat_id}

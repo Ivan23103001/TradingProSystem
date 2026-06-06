@@ -248,7 +248,7 @@ class TelegramListener:
             payload = {
                 "chat_id": chat_id,
                 "text": text,
-                "parse_mode": "Markdown"
+                "parse_mode": "MarkdownV2"
             }
             res = self.session.post(url, json=payload, timeout=10)
             if res.status_code != 200:

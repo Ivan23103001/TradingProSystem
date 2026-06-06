@@ -139,7 +139,7 @@ def get_trade_history(limit=500, db_path=None):
     conn = get_connection(path)
     try:
         df = pd.read_sql_query(
-            f"SELECT * FROM trades ORDER BY id DESC LIMIT {limit}", conn
+            "SELECT * FROM trades ORDER BY id DESC LIMIT ?", conn, params=(limit,)
         )
         return df
     except Exception as e:
@@ -156,7 +156,7 @@ def get_equity_history(limit=1000, db_path=None):
     conn = get_connection(path)
     try:
         df = pd.read_sql_query(
-            f"SELECT * FROM equity_history ORDER BY id DESC LIMIT {limit}", conn
+            "SELECT * FROM equity_history ORDER BY id DESC LIMIT ?", conn, params=(limit,)
         )
         return df
     except Exception as e:
@@ -267,7 +267,7 @@ def archive_old_trades(days_to_keep=90, db_path=None):
         cursor = conn.cursor()
         
         # Calcular fecha límite
-        cursor.execute(f"SELECT date('now', '-{days_to_keep} days')")
+        cursor.execute("SELECT date('now', ?)", (f'-{days_to_keep} days',))
         cutoff_date = cursor.fetchone()[0]
         
         # Borrar trades viejos
@@ -335,7 +335,7 @@ def get_audit_logs(limit=100, event_type=None, db_path=None):
             )
         else:
             df = pd.read_sql_query(
-                f"SELECT * FROM audit_log ORDER BY id DESC LIMIT {limit}", conn
+                "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", conn, params=(limit,)
             )
         return df
     except Exception as e:

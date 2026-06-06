@@ -218,6 +218,9 @@ def calculate_kelly_criterion(db_path='trade_history.db'):
     """
     Calcula el Criterio de Kelly fraccionario basado en el historial real.
     f* = (p * b - q) / b
+    
+    v5.3: Normaliza PnL a porcentaje (pnl / cantidad) para evitar sesgo
+    por diferencias en tamaño de posición (notional).
     """
     try:
         if not os.path.exists(db_path):
@@ -225,14 +228,19 @@ def calculate_kelly_criterion(db_path='trade_history.db'):
             
         from .database import get_connection
         conn = get_connection(db_path)
-        df_trades = pd.read_sql_query("SELECT pnl FROM trades WHERE pnl IS NOT NULL", conn)
+        df_trades = pd.read_sql_query(
+            "SELECT pnl, cantidad FROM trades WHERE pnl IS NOT NULL", conn
+        )
         # No cerrar: la conexión pertenece al pool thread-local
         
         if len(df_trades) < 5:
             return 0.15
+        
+        # Normalizar PnL a porcentaje: dividir por el notional (guardado en 'cantidad')
+        df_trades['pnl_pct'] = df_trades['pnl'] / df_trades['cantidad'].abs()
             
-        wins = df_trades[df_trades['pnl'] > 0]['pnl']
-        losses = df_trades[df_trades['pnl'] <= 0]['pnl'].abs()
+        wins = df_trades[df_trades['pnl_pct'] > 0]['pnl_pct']
+        losses = df_trades[df_trades['pnl_pct'] <= 0]['pnl_pct'].abs()
         
         if len(losses) == 0: return 0.2
         

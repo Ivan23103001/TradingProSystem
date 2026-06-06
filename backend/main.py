@@ -1,10 +1,13 @@
 # ═══════════════════════════════════════════════════════════════
-# ABSOLUTO PRIMERO: cargar .env antes de cualquier import
-# que pueda leer os.environ. Esto debe ejecutarse ANTES de
-# importar logging, fastapi, o cualquier módulo core.
+# ABSOLUTO PRIMERO: cargar .env + logging antes de cualquier otro
+# import que pueda leer os.environ. Esto debe ejecutarse ANTES de
+# importar fastapi o cualquier módulo core.
 # ═══════════════════════════════════════════════════════════════
 import pathlib
 import os
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 _BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 _dotenv_path = _BASE_DIR / ".env"
 from dotenv import load_dotenv
@@ -32,9 +35,7 @@ load_dotenv(dotenv_path=_dotenv_path, override=True)
 # Ahora sí: el resto de imports y configuración
 # ═══════════════════════════════════════════════════════════════
 import sys
-import logging
 from datetime import datetime
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.info(f"📝 .env cargado: existe={_env_file_exists}, ruta={_dotenv_path}")
 _trading_keys_in_file = [k for k in _env_vars_from_file if k.startswith("TRADING_")]
 _trading_vars_loaded = {k: f"***(len={len(v)})" for k, v in os.environ.items() if k.startswith("TRADING_")}

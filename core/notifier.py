@@ -11,7 +11,7 @@ class TelegramNotifier:
         if not self.bot_token or not self.chat_id:
             return
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"}
+        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "MarkdownV2"}
         try:
             resp = requests.post(url, json=payload, timeout=10)
             if resp.status_code != 200:

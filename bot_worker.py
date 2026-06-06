@@ -10,6 +10,7 @@ load_dotenv(dotenv_path=_dotenv_path, override=True)
 
 import time
 import logging
+import logging.handlers
 import re
 import threading
 import concurrent.futures
@@ -147,7 +148,12 @@ def main():
     except Exception as e:
         logging.warning(f"No se pudo cargar estado persistido: {e}")
 
-    while True:
+    # Crear ThreadPoolExecutor UNA SOLA VEZ para reutilizar en todos los ciclos
+    # (antes se creaba/destruía uno nuevo cada 60s — ~600 creaciones/hora)
+    ticker_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+
+    try:
+     while True:
         cycle_start = time.time()
         correlation_id = _new_correlation_id()
         try:
@@ -412,17 +418,16 @@ def main():
             # Leer configuración de gestión de riesgo
             use_atr_sl = config.get('use_atr_sl', True)
 
-            # Fase 1: Descarga y análisis en paralelo (ThreadPoolExecutor)
+            # Fase 1: Descarga y análisis en paralelo (ThreadPoolExecutor reutilizado)
             ticker_results = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ticker_executor:
-                futures_map = {ticker_executor.submit(_analyze_ticker_parallel, t, period, interval, spy_sentiment): t for t in tickers}
-                for future in concurrent.futures.as_completed(futures_map):
-                    try:
-                        result = future.result()
-                        ticker_results[result["ticker"]] = result
-                    except Exception as e:
-                        t = futures_map[future]
-                        logging.error(f"Error procesando {t}: {e}")
+            futures_map = {ticker_executor.submit(_analyze_ticker_parallel, t, period, interval, spy_sentiment): t for t in tickers}
+            for future in concurrent.futures.as_completed(futures_map):
+                try:
+                    result = future.result()
+                    ticker_results[result["ticker"]] = result
+                except Exception as e:
+                    t = futures_map[future]
+                    logging.error(f"Error procesando {t}: {e}")
 
             for t in tickers:
                 try:
@@ -633,6 +638,9 @@ def main():
         except Exception as e:
             logging.error(f"Error crítico en loop principal: {e}")
             time.sleep(60)
+    finally:
+        ticker_executor.shutdown(wait=True)
+        logging.info("ThreadPoolExecutor del worker finalizado limpiamente.")
 
 if __name__ == "__main__":
     main()

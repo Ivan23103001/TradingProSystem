@@ -75,14 +75,22 @@ def init_db(db_path=None):
                       user_agent TEXT,
                       details_json TEXT,
                       severity TEXT DEFAULT 'INFO')''')
+        c.execute('''CREATE TABLE IF NOT EXISTS price_alerts
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      ticker TEXT NOT NULL,
+                      target_price REAL NOT NULL,
+                      direction TEXT NOT NULL CHECK(direction IN ('ABOVE', 'BELOW')),
+                      active INTEGER DEFAULT 1,
+                      created_at TEXT NOT NULL)''')
         # Índices para consultas frecuentes
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_trades_fecha ON trades(fecha)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_equity_fecha ON equity_history(fecha)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)''')
         c.execute('''CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_log(event_type)''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_alerts_active ON price_alerts(active)''')
         conn.commit()
-        logging.info("✅ Base de datos inicializada: tablas trades, equity_history, bot_state y audit_log listas.")
+        logging.info("✅ Base de datos inicializada: tablas trades, equity_history, bot_state, audit_log y price_alerts listas.")
     except Exception as e:
         logging.error(f"Error inicializando DB: {e}")
         # Si falla la inicialización, remover la conexión dañada del pool
@@ -317,6 +325,68 @@ def save_audit_log(event_type, details=None, ip_address=None, user_agent=None, s
         conn.commit()
     except Exception as e:
         logging.error(f"Error guardando audit_log [{event_type}]: {e}")
+
+
+def save_price_alert(ticker: str, target_price: float, direction: str, db_path: Optional[str] = None) -> int:
+    """
+    Crea una alerta de precio. Retorna el ID de la alerta creada.
+    
+    Args:
+        ticker: Símbolo (ej. 'AAPL')
+        target_price: Precio objetivo
+        direction: 'ABOVE' (cuando el precio supere) o 'BELOW' (cuando caiga por debajo)
+    """
+    from datetime import datetime
+    path = db_path or DB_NAME
+    conn = get_connection(path)
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO price_alerts (ticker, target_price, direction, active, created_at) VALUES (?,?,?,1,?)",
+            (ticker.upper(), target_price, direction.upper(), now)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        logging.error(f"Error guardando price_alert: {e}")
+        return -1
+
+
+def get_price_alerts(active_only: bool = True, db_path: Optional[str] = None) -> list:
+    """Obtiene todas las alertas de precio. active_only=True retorna solo las activas."""
+    path = db_path or DB_NAME
+    if not os.path.exists(path):
+        return []
+    conn = get_connection(path)
+    try:
+        cursor = conn.cursor()
+        if active_only:
+            cursor.execute("SELECT id, ticker, target_price, direction, created_at FROM price_alerts WHERE active=1 ORDER BY id DESC")
+        else:
+            cursor.execute("SELECT id, ticker, target_price, direction, active, created_at FROM price_alerts ORDER BY id DESC")
+        rows = cursor.fetchall()
+        return [{"id": r[0], "ticker": r[1], "target_price": r[2], "direction": r[3],
+                 "active": r[4] if not active_only else True, "created_at": r[4 if not active_only else 4]} for r in rows]
+    except Exception as e:
+        logging.error(f"Error leyendo price_alerts: {e}")
+        return []
+
+
+def delete_price_alert(alert_id: int, db_path: Optional[str] = None) -> bool:
+    """Desactiva (soft delete) una alerta por ID. Retorna True si se desactivó."""
+    path = db_path or DB_NAME
+    if not os.path.exists(path):
+        return False
+    conn = get_connection(path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE price_alerts SET active=0 WHERE id=?", (alert_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        logging.error(f"Error desactivando price_alert {alert_id}: {e}")
+        return False
 
 
 def get_audit_logs(limit=100, event_type=None, db_path=None):

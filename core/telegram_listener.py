@@ -3,7 +3,7 @@ import logging
 import threading
 import requests
 from datetime import datetime
-from core.database import get_connection
+from core.database import get_connection, save_price_alert, get_price_alerts, delete_price_alert
 from core.config import get_config, save_config
 from core.health_server import _state, _start_time
 
@@ -91,9 +91,17 @@ class TelegramListener:
                 "🔹 <code>/balance</code> o <code>/posiciones</code> - Fondos y posiciones abiertas en Alpaca.\n"
                 "🔹 <code>/señal SPY</code> - Score, dirección y escenario de un ticker.\n"
                 "🔹 <code>/señales</code> - Top 5 señales de compra y venta del último escaneo.\n\n"
+                "💵 <b>Comandos de Capital:</b>\n"
+                "🔹 <code>/monto 200</code> - Cambiar monto por operación (USD).\n"
+                "🔹 <code>/pnl</code> - PnL acumulado de los últimos 7 días por ticker.\n\n"
                 "⚙️ <b>Comandos de Control:</b>\n"
                 "🔹 <code>/auto_trade on</code> | <code>off</code> - Activar/Desactivar ejecución automática.\n"
                 "🔹 <code>/auto_scan on</code> | <code>off</code> - Activar/Desactivar escaneo de mercado.\n\n"
+                "⏰ <b>Alertas de Precio:</b>\n"
+                "🔹 <code>/alerta AAPL 200</code> - Crear alerta cuando AAPL supere $200.\n"
+                "🔹 <code>/alerta_bajo AAPL 180</code> - Crear alerta cuando AAPL caiga debajo de $180.\n"
+                "🔹 <code>/alertas</code> - Listar todas las alertas activas.\n"
+                "🔹 <code>/borrar_alerta 3</code> - Eliminar la alerta #3.\n\n"
                 "🔒 <b>Nota de Seguridad:</b> Tu chat está restringido exclusivamente para tu ID de usuario."
             )
             self.send_reply(chat_id, response)
@@ -121,6 +129,24 @@ class TelegramListener:
         # ── Historial ──
         elif command == "/historial_hoy":
             self._cmd_historial_hoy(chat_id)
+
+        # ── Cambiar monto ──
+        elif command == "/monto":
+            self._cmd_monto(chat_id, args)
+
+        # ── PnL ──
+        elif command == "/pnl":
+            self._cmd_pnl(chat_id)
+
+        # ── Alertas ──
+        elif command == "/alerta":
+            self._cmd_alerta(chat_id, args, "ABOVE")
+        elif command == "/alerta_bajo":
+            self._cmd_alerta(chat_id, args, "BELOW")
+        elif command == "/alertas":
+            self._cmd_alertas(chat_id)
+        elif command == "/borrar_alerta":
+            self._cmd_borrar_alerta(chat_id, args)
 
         # ── Balance / Posiciones ──
         elif command in ("/balance", "/posiciones"):
@@ -405,6 +431,143 @@ class TelegramListener:
         except Exception as e:
             logging.error(f"Error en comando /balance: {e}")
             self.send_reply(chat_id, f"❌ Error al consultar la cartera de Alpaca: {str(e)}")
+
+    # ═══════════════════════════════════════════════════════════════
+    # NUEVO — Comandos de Capital y Alertas (Nivel 2)
+    # ═══════════════════════════════════════════════════════════════
+
+    def _cmd_monto(self, chat_id, args):
+        """Cambia el monto por operación (trade_amount)."""
+        try:
+            if not args:
+                config = get_config()
+                current = config.get("trade_amount", 100)
+                self.send_reply(chat_id, f"💵 Monto actual: <b>${current:,.2f}</b> USD por operación.\nUsa <code>/monto 200</code> para cambiarlo.")
+                return
+
+            try:
+                nuevo_monto = float(args[0])
+            except ValueError:
+                self.send_reply(chat_id, "⚠️ El monto debe ser un número. Ej: <code>/monto 200</code>")
+                return
+
+            if nuevo_monto < 10:
+                self.send_reply(chat_id, "⚠️ El monto mínimo es $10 USD.")
+                return
+
+            config = get_config()
+            old_amount = config.get("trade_amount", 100)
+            config["trade_amount"] = nuevo_monto
+            save_config(config)
+
+            self.send_reply(chat_id, f"✅ Monto actualizado: <b>${old_amount:,.2f}</b> → <b>${nuevo_monto:,.2f}</b> USD")
+            logging.info(f"📝 [Telegram] trade_amount cambiado de ${old_amount} a ${nuevo_monto}")
+        except Exception as e:
+            logging.error(f"Error en /monto: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
+
+    def _cmd_pnl(self, chat_id):
+        """PnL acumulado de los últimos 7 días por ticker."""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT ticker, SUM(pnl) as total_pnl, COUNT(*) as trades FROM trades WHERE pnl IS NOT NULL AND fecha >= date('now', '-7 days') GROUP BY ticker ORDER BY total_pnl DESC LIMIT 15"
+            )
+            rows = cursor.fetchall()
+
+            if not rows:
+                self.send_reply(chat_id, "📭 No hay operaciones cerradas en los últimos 7 días.")
+                return
+
+            response = "💰 <b>PnL Acumulado — Últimos 7 Días</b>\n\n"
+            total = 0.0
+            for ticker, pnl, trades in rows:
+                emoji = "📈" if pnl >= 0 else "📉"
+                response += f"{emoji} <b>{ticker}</b>: <code>${pnl:+,.2f}</code> ({trades} trades)\n"
+                total += pnl
+
+            emoji_total = "🟢" if total >= 0 else "🔴"
+            response += f"\n{emoji_total} <b>Total:</b> <code>${total:+,.2f}</code>"
+            self.send_reply(chat_id, response)
+        except Exception as e:
+            logging.error(f"Error en /pnl: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
+
+    def _cmd_alerta(self, chat_id, args, direction):
+        """Crea una alerta de precio (ABOVE o BELOW)."""
+        try:
+            if len(args) < 2:
+                ejemplo = "/alerta AAPL 200" if direction == "ABOVE" else "/alerta_bajo AAPL 180"
+                self.send_reply(chat_id, f"⚠️ Uso: <code>{ejemplo}</code>")
+                return
+
+            ticker = args[0].upper().strip()
+            try:
+                target = float(args[1])
+            except ValueError:
+                self.send_reply(chat_id, "⚠️ El precio debe ser un número.")
+                return
+
+            if target <= 0:
+                self.send_reply(chat_id, "⚠️ El precio debe ser positivo.")
+                return
+
+            alert_id = save_price_alert(ticker, target, direction)
+            if alert_id > 0:
+                direccion_txt = "supere" if direction == "ABOVE" else "caiga debajo de"
+                self.send_reply(
+                    chat_id,
+                    f"✅ <b>Alerta #{alert_id} creada:</b> {ticker} cuando {direccion_txt} <code>${target:,.2f}</code>"
+                )
+                logging.info(f"📝 [Telegram] Alerta #{alert_id}: {ticker} {direction} ${target}")
+            else:
+                self.send_reply(chat_id, "❌ No se pudo crear la alerta.")
+        except Exception as e:
+            logging.error(f"Error en /alerta: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
+
+    def _cmd_alertas(self, chat_id):
+        """Lista todas las alertas activas."""
+        try:
+            alerts = get_price_alerts(active_only=True)
+            if not alerts:
+                self.send_reply(chat_id, "📭 No hay alertas activas.\nCrea una con <code>/alerta AAPL 200</code>")
+                return
+
+            response = "⏰ <b>Alertas de Precio Activas</b>\n\n"
+            for a in alerts:
+                direccion = "supere" if a['direction'] == 'ABOVE' else "caiga debajo de"
+                response += (
+                    f"🔔 <b>#{a['id']}</b> — {a['ticker']} cuando {direccion} <code>${a['target_price']:,.2f}</code>\n"
+                    f"    <i>Creada: {a['created_at']}</i>\n\n"
+                )
+            self.send_reply(chat_id, response)
+        except Exception as e:
+            logging.error(f"Error en /alertas: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
+
+    def _cmd_borrar_alerta(self, chat_id, args):
+        """Elimina una alerta por ID."""
+        try:
+            if not args:
+                self.send_reply(chat_id, "⚠️ Uso: <code>/borrar_alerta 3</code> (el número es el ID de la alerta)")
+                return
+
+            try:
+                alert_id = int(args[0])
+            except ValueError:
+                self.send_reply(chat_id, "⚠️ El ID debe ser un número. Usa <code>/alertas</code> para ver los IDs.")
+                return
+
+            if delete_price_alert(alert_id):
+                self.send_reply(chat_id, f"🗑️ <b>Alerta #{alert_id} eliminada.</b>")
+                logging.info(f"📝 [Telegram] Alerta #{alert_id} desactivada.")
+            else:
+                self.send_reply(chat_id, f"⚠️ No se encontró la alerta #{alert_id}.")
+        except Exception as e:
+            logging.error(f"Error en /borrar_alerta: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def send_reply(self, chat_id, text):
         """Envía una respuesta de vuelta al chat en formato HTML."""

@@ -30,7 +30,8 @@ TradingProSystem/
 │   └── health_server.py         # Servidor FastAPI ligero para health checks (puerto 8001)
 │
 ├── backend/
-│   └── main.py                  # API REST FastAPI (puerto 8000) con auth, rate-limit, /api/v1 idempotente
+│   ├── main.py                  # API REST FastAPI (puerto 8000) con auth, rate-limit, /api/v1 idempotente
+│   └── init_modules.py          # Inicialización lazy de 7 módulos core (extraído de main.py v5.3)
 │
 ├── frontend/                    # 🆕 Frontend React/Vite (v5.1)
 │   ├── index.html               # Entry point HTML con error handlers globales
@@ -66,7 +67,7 @@ TradingProSystem/
 ├── requirements.txt             # Dependencias del proyecto fijadas
 ├── bot_config.json              # Configuración persistente del usuario en tiempo de ejecución
 ├── ecosystem.config.js          # 🆕 Configuración PM2 (tps-backend :8000 + tps-worker)
-├── nginx-tradingpro.conf        # 🆕 Nginx reverse proxy (:80 → :8000) + static files + security
+├── nginx-tradingpro.conf        # 🆕 Nginx reverse proxy (HTTPS :443 + HTTP :80 → redirect) + HSTS + rate limiting
 ├── .env.example                 # Plantilla de variables de entorno (Alpaca, Telegram, API Key)
 ├── .env                         # Variables de entorno reales (NO committear, en .gitignore)
 └── ml_trading_model.pkl / .sig  # Modelo ML serializado + firma HMAC-SHA256

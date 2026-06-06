@@ -19,8 +19,16 @@ MODEL_SIG_PATH = MODEL_PATH + ".sig"
 MODEL_BACKUPS_DIR = _BASE_DIR / "model_backups"
 
 # Clave de firma HMAC para integridad del modelo (anti-manipulación pickle)
-# Derivada de machine-id si existe, más un secreto fijo como fallback
+# v5.3: Lee ML_SIGNING_SECRET del entorno. Si no existe, usa un secreto
+# derivado de machine-id + fallback fijo (igual de seguro en VPS, pero
+# ahora configurable para entornos multi-instancia).
 def _derive_signing_key():
+    # Prioridad 1: Variable de entorno (permite rotación y multi-instancia)
+    env_secret = os.getenv("ML_SIGNING_SECRET", "")
+    if env_secret:
+        return env_secret.encode("utf-8")
+
+    # Prioridad 2: Derivar de machine-id + secreto fijo (fallback seguro)
     key = b"TradingProSystem_v5_ML_Model_Signing_Key_2026"
     try:
         # Intentar derivar de /etc/machine-id (Linux) o registry (Windows)

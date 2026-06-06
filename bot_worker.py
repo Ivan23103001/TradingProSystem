@@ -473,6 +473,12 @@ def main():
                     # Lógica de Trade
                     if auto_trade and mkt_open and signal in ["LONG", "SHORT"] and bc and bc.is_connected():
 
+                        # IMP-0: No operar tickers que ya tienen posición abierta
+                        active_symbols = set(state_memory.get("active_positions", {}).keys())
+                        if t in active_symbols:
+                            logging.debug(f"⏭️ {t} ya tiene posición abierta — omitiendo nueva entrada.")
+                            continue
+
                         # IMP-1: Límite de posiciones concurrentes
                         if open_count >= TradingBrain.MAX_CONCURRENT_POSITIONS:
                             logging.info(f"⛔ Máx. {TradingBrain.MAX_CONCURRENT_POSITIONS} posiciones alcanzado. Omitiendo {t}")

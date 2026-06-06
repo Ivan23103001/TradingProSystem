@@ -56,12 +56,32 @@ Sistema de trading algorítmico institucional basado en **Smart Money Concepts (
 - **Iniciar Bot Automático (Worker):** `python bot_worker.py`
 - **PM2 (producción):** `pm2 start ecosystem.config.js`
 - **PM2 restart:** `pm2 restart all`
+- **PM2 logs:** `pm2 logs --lines 20`
 - **Probar Conexión:** `python scripts/check_conn.py`
 - **Ver Estado del Bot:** `python scripts/check_status.py`
 - **Verificar P&L:** `python scripts/check_pnl.py`
 - **Entrenar ML:** `python scripts/train_ai.py`
 - **Tests:** `python -m pytest tests/ -v`
 - **Frontend build:** `cd frontend && npm run build`
+
+## 🤖 Comandos de Telegram (15 comandos)
+| Categoría | Comando | Acción |
+|-----------|---------|--------|
+| Consulta | `/estado` | Salud del sistema |
+| Consulta | `/historial_hoy` | Trades cerrados hoy |
+| Consulta | `/balance` | Cartera Alpaca |
+| Consulta | `/señal SPY` | Score de un ticker |
+| Consulta | `/señales` | Top 5 compras/ventas |
+| Consulta | `/chart SPY` | Gráfico de velas profesional |
+| Capital | `/monto 200` | Cambiar monto/operación |
+| Capital | `/pnl` | PnL 7 días por ticker |
+| Control | `/auto_trade on/off` | Ejecución automática |
+| Control | `/auto_scan on/off` | Escaneo de mercado |
+| Alertas | `/alerta AAPL 200` | Alerta si sube |
+| Alertas | `/alerta_bajo AAPL 180` | Alerta si baja |
+| Alertas | `/alertas` | Listar alertas |
+| Alertas | `/borrar_alerta 3` | Eliminar alerta |
+| Ayuda | `/ayuda` | Menú completo |
 
 ---
 > [!IMPORTANT]

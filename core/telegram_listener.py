@@ -90,7 +90,8 @@ class TelegramListener:
                 "🔹 <code>/historial_hoy</code> - Operaciones completadas hoy con su PnL.\n"
                 "🔹 <code>/balance</code> o <code>/posiciones</code> - Fondos y posiciones abiertas en Alpaca.\n"
                 "🔹 <code>/señal SPY</code> - Score, dirección y escenario de un ticker.\n"
-                "🔹 <code>/señales</code> - Top 5 señales de compra y venta del último escaneo.\n\n"
+                "🔹 <code>/señales</code> - Top 5 señales de compra y venta del último escaneo.\n"
+                "🔹 <code>/chart SPY</code> - Enviar gráfico de velas con EMAs y volumen.\n\n"
                 "💵 <b>Comandos de Capital:</b>\n"
                 "🔹 <code>/monto 200</code> - Cambiar monto por operación (USD).\n"
                 "🔹 <code>/pnl</code> - PnL acumulado de los últimos 7 días por ticker.\n\n"
@@ -138,6 +139,10 @@ class TelegramListener:
         elif command == "/pnl":
             self._cmd_pnl(chat_id)
 
+        # ── Gráfico rápido ──
+        elif command == "/chart":
+            self._cmd_chart(chat_id, args)
+
         # ── Alertas ──
         elif command == "/alerta":
             self._cmd_alerta(chat_id, args, "ABOVE")
@@ -157,7 +162,7 @@ class TelegramListener:
             self.send_reply(chat_id, response)
 
     # ═══════════════════════════════════════════════════════════════
-    # NUEVO — Comandos de Control
+    # Comandos de Control (Nivel 1)
     # ═══════════════════════════════════════════════════════════════
 
     def _cmd_toggle(self, chat_id, key, args):
@@ -169,7 +174,6 @@ class TelegramListener:
 
             value = args[0].lower() == "on"
             config = get_config()
-            old_value = config.get(key, False)
             config[key] = value
             save_config(config)
 
@@ -248,11 +252,7 @@ class TelegramListener:
                     if df.empty or len(df) < 50:
                         return None
                     da = apply_strategy(df, spy_sentiment=spy_sent, ticker_symbol=t)
-                    return {
-                        "ticker": t,
-                        "score": int(da['Score'].iloc[-1]),
-                        "price": float(da['Close'].iloc[-1]),
-                    }
+                    return {"ticker": t, "score": int(da['Score'].iloc[-1]), "price": float(da['Close'].iloc[-1])}
                 except Exception:
                     return None
 
@@ -268,28 +268,22 @@ class TelegramListener:
                 self.send_reply(chat_id, "⚠️ No se pudieron obtener señales en este momento.")
                 return
 
-            # Top compras (score > 50, ordenado descendente)
             compras = sorted([r for r in results if r['score'] > 50], key=lambda x: x['score'], reverse=True)[:5]
-            # Top ventas (score < 50, ordenado ascendente)
             ventas = sorted([r for r in results if r['score'] < 50], key=lambda x: x['score'])[:5]
 
             response = "📊 <b>Top Señales del Mercado</b>\n\n"
-
             if compras:
                 response += "🟢 <b>Mejores Compras:</b>\n"
                 for i, r in enumerate(compras, 1):
                     response += f"  {i}. <b>{r['ticker']}</b> — Score <code>{r['score']}</code> | <code>${r['price']:,.2f}</code>\n"
                 response += "\n"
-
             if ventas:
                 response += "🔴 <b>Mejores Ventas:</b>\n"
                 for i, r in enumerate(ventas, 1):
                     response += f"  {i}. <b>{r['ticker']}</b> — Score <code>{r['score']}</code> | <code>${r['price']:,.2f}</code>\n"
                 response += "\n"
-
             if not compras and not ventas:
                 response += "⚪ <b>Mercado neutral:</b> Sin señales claras en este momento.\n"
-
             response += f"<i>Basado en {len(results)} tickers analizados.</i>"
             self.send_reply(chat_id, response)
         except Exception as e:
@@ -297,22 +291,17 @@ class TelegramListener:
             self.send_reply(chat_id, f"❌ Error al escanear señales: {str(e)}")
 
     # ═══════════════════════════════════════════════════════════════
-    # Comandos Existentes
+    # Comandos de Consulta (Existentes)
     # ═══════════════════════════════════════════════════════════════
 
     def _cmd_estado(self, chat_id):
         try:
             config = get_config()
-            auto_trade = config.get("auto_trade", False)
-            auto_scan = config.get("auto_scan", False)
-
-            # Uptime
             uptime_seconds = int(time.time() - _start_time)
             hours, remainder = divmod(uptime_seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
             uptime_str = f"{hours}h {minutes}m {seconds}s"
 
-            # Broker Connection
             broker_status = "🔴 Desconectado"
             if self.broker_client and self.broker_client.is_connected():
                 broker_status = "🟢 Conectado"
@@ -322,8 +311,8 @@ class TelegramListener:
 
             response = (
                 "🖥️ <b>Estado del Sistema TradingProSystem</b>\n\n"
-                f"🤖 <b>Auto-Trade:</b> {'🟢 Encendido (Operando)' if auto_trade else '🔴 Apagado (Simulación/Pausa)'}\n"
-                f"🔍 <b>Auto-Scan:</b> {'🟢 Activo' if auto_scan else '🔴 Inactivo'}\n"
+                f"🤖 <b>Auto-Trade:</b> {'🟢 Encendido' if config.get('auto_trade') else '🔴 Apagado'}\n"
+                f"🔍 <b>Auto-Scan:</b> {'🟢 Activo' if config.get('auto_scan') else '🔴 Inactivo'}\n"
                 f"💼 <b>Broker Alpaca:</b> {broker_status}\n"
                 f"⏰ <b>Uptime del Worker:</b> <code>{uptime_str}</code>\n"
                 f"🎯 <b>Último Escaneo:</b> <code>{last_scan_str}</code>\n"
@@ -331,32 +320,28 @@ class TelegramListener:
             )
             self.send_reply(chat_id, response)
         except Exception as e:
-            logging.error(f"Error procesando comando /estado: {e}")
-            self.send_reply(chat_id, f"❌ Error al consultar el estado del sistema: {str(e)}")
+            logging.error(f"Error en /estado: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def _cmd_historial_hoy(self, chat_id):
         try:
             conn = get_connection()
             cursor = conn.cursor()
-
             hoy = datetime.now().strftime("%Y-%m-%d")
             cursor.execute(
                 "SELECT ticker, tipo, precio, cantidad, score, pnl, fecha FROM trades WHERE fecha LIKE ? ORDER BY id DESC",
                 (f"{hoy}%",)
             )
             rows = cursor.fetchall()
-
             if not rows:
-                self.send_reply(chat_id, f"📭 <b>Historial:</b> No se han registrado operaciones hoy (<code>{hoy}</code>).")
+                self.send_reply(chat_id, f"📭 No hay operaciones hoy (<code>{hoy}</code>).")
                 return
 
-            response = f"📊 <b>Historial de operaciones de hoy ({hoy}):</b>\n\n"
+            response = f"📊 <b>Historial de hoy ({hoy}):</b>\n\n"
             total_pnl = 0.0
             pnl_count = 0
-
             for row in rows:
                 ticker, tipo, precio, cantidad, score, pnl, fecha = row
-
                 if pnl is not None:
                     pnl_val = float(pnl)
                     total_pnl += pnl_val
@@ -364,210 +349,232 @@ class TelegramListener:
                     pnl_str = f"💵 PnL: <b>${pnl_val:+.2f}</b>"
                 else:
                     pnl_str = "💵 PnL: <b>N/A (Abierta)</b>"
-
-                emoji = "🟢 LONG (Compra)" if "LONG" in tipo or "buy" in tipo.lower() else "🔴 SHORT (Venta)"
+                emoji = "🟢 LONG" if "LONG" in tipo or "buy" in tipo.lower() else "🔴 SHORT"
                 hora = fecha.split()[1] if " " in fecha else fecha
-
-                response += (
-                    f"🔹 <b>{ticker}</b> | {emoji} a las <code>{hora}</code>\n"
-                    f"  • Precio: <code>${precio:,.2f}</code> | Cant: <code>{cantidad}</code>\n"
-                    f"  • Score Estrategia: <code>{score}/100</code>\n"
-                    f"  • {pnl_str}\n\n"
-                )
-
+                response += f"🔹 <b>{ticker}</b> | {emoji} <code>{hora}</code> — {pnl_str}\n"
             if pnl_count > 0:
-                response += f"🏁 <b>PnL Acumulado Cerrado Hoy:</b> <code>${total_pnl:+.2f}</code>"
-
+                response += f"\n🏁 <b>PnL Cerrado Hoy:</b> <code>${total_pnl:+.2f}</code>"
             self.send_reply(chat_id, response)
         except Exception as e:
-            logging.error(f"Error en comando /historial_hoy: {e}")
-            self.send_reply(chat_id, f"❌ Error al consultar el historial de hoy: {str(e)}")
+            logging.error(f"Error en /historial_hoy: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def _cmd_balance_posiciones(self, chat_id):
         try:
             if not self.broker_client or not self.broker_client.is_connected():
-                self.send_reply(chat_id, "⚠️ El Broker Alpaca no está configurado o no está conectado.")
+                self.send_reply(chat_id, "⚠️ Broker Alpaca no conectado.")
                 return
-
             acc = self.broker_client.get_account_info()
             if not acc:
-                self.send_reply(chat_id, "❌ No se pudo recuperar la información de la cuenta de Alpaca.")
+                self.send_reply(chat_id, "❌ No se pudo obtener info de cuenta.")
                 return
-
-            buying_power = acc.get("buying_power", 0.0)
-            equity = acc.get("equity", 0.0)
-            status = acc.get("status", "Unknown")
-
             response = (
-                "💼 <b>Cartera y Balance en Alpaca</b>\n\n"
-                f"💳 <b>Capital Total (Equity):</b> <code>${equity:,.2f}</code>\n"
-                f"💵 <b>Poder de Compra:</b> <code>${buying_power:,.2f}</code>\n"
-                f"🚦 <b>Estado Cuenta:</b> <code>{status}</code>\n\n"
+                f"💼 <b>Cartera Alpaca</b>\n"
+                f"💳 Equity: <code>${acc.get('equity',0):,.2f}</code>\n"
+                f"💵 Buying Power: <code>${acc.get('buying_power',0):,.2f}</code>\n\n"
             )
-
             positions = self.broker_client.get_open_positions()
             if not positions:
-                response += "📭 <b>Posiciones Abiertas:</b> Ninguna posición activa."
+                response += "📭 Sin posiciones abiertas."
             else:
-                response += "📌 <b>Posiciones Activas:</b>\n\n"
+                response += "📌 <b>Posiciones:</b>\n"
                 for p in positions:
-                    symbol = p.get("symbol")
-                    qty = p.get("qty", 0.0)
-                    mkt_val = p.get("market_value", 0.0)
-                    unrealized_pl = p.get("unrealized_pl", 0.0)
-                    unrealized_plpc = p.get("unrealized_plpc", 0.0)
-                    side = str(p.get("side", "long")).upper()
-
-                    side_emoji = "🟢" if side == "LONG" else "🔴"
-                    pl_emoji = "📈" if unrealized_pl >= 0 else "📉"
-
-                    response += (
-                        f"{side_emoji} <b>{symbol}</b> ({side})\n"
-                        f"  • Cantidad: <code>{qty}</code> | Valor: <code>${mkt_val:,.2f}</code>\n"
-                        f"  • PnL Flotante: {pl_emoji} <b>${unrealized_pl:+.2f}</b> (<code>{unrealized_plpc:+.2f}%</code>)\n\n"
-                    )
-
+                    side = "🟢 LONG" if p['side'] == 'long' else "🔴 SHORT"
+                    response += f"{side} <b>{p['symbol']}</b>: {p['qty']} @ <code>${p['current_price']:,.2f}</code> | PnL: <b>${p['unrealized_pl']:+,.2f}</b>\n"
             self.send_reply(chat_id, response)
         except Exception as e:
-            logging.error(f"Error en comando /balance: {e}")
-            self.send_reply(chat_id, f"❌ Error al consultar la cartera de Alpaca: {str(e)}")
+            logging.error(f"Error en /balance: {e}")
+            self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     # ═══════════════════════════════════════════════════════════════
-    # NUEVO — Comandos de Capital y Alertas (Nivel 2)
+    # Comandos de Capital y Alertas (Nivel 2)
     # ═══════════════════════════════════════════════════════════════
 
     def _cmd_monto(self, chat_id, args):
-        """Cambia el monto por operación (trade_amount)."""
         try:
             if not args:
                 config = get_config()
                 current = config.get("trade_amount", 100)
-                self.send_reply(chat_id, f"💵 Monto actual: <b>${current:,.2f}</b> USD por operación.\nUsa <code>/monto 200</code> para cambiarlo.")
+                self.send_reply(chat_id, f"💵 Monto actual: <b>${current:,.2f}</b> USD.\nUsa <code>/monto 200</code> para cambiarlo.")
                 return
-
             try:
-                nuevo_monto = float(args[0])
+                nuevo = float(args[0])
             except ValueError:
-                self.send_reply(chat_id, "⚠️ El monto debe ser un número. Ej: <code>/monto 200</code>")
+                self.send_reply(chat_id, "⚠️ Debe ser un número. Ej: <code>/monto 200</code>")
                 return
-
-            if nuevo_monto < 10:
-                self.send_reply(chat_id, "⚠️ El monto mínimo es $10 USD.")
+            if nuevo < 10:
+                self.send_reply(chat_id, "⚠️ Mínimo $10 USD.")
                 return
-
             config = get_config()
-            old_amount = config.get("trade_amount", 100)
-            config["trade_amount"] = nuevo_monto
+            old = config.get("trade_amount", 100)
+            config["trade_amount"] = nuevo
             save_config(config)
-
-            self.send_reply(chat_id, f"✅ Monto actualizado: <b>${old_amount:,.2f}</b> → <b>${nuevo_monto:,.2f}</b> USD")
-            logging.info(f"📝 [Telegram] trade_amount cambiado de ${old_amount} a ${nuevo_monto}")
+            self.send_reply(chat_id, f"✅ Monto: <b>${old:,.2f}</b> → <b>${nuevo:,.2f}</b> USD")
         except Exception as e:
             logging.error(f"Error en /monto: {e}")
             self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def _cmd_pnl(self, chat_id):
-        """PnL acumulado de los últimos 7 días por ticker."""
         try:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT ticker, SUM(pnl) as total_pnl, COUNT(*) as trades FROM trades WHERE pnl IS NOT NULL AND fecha >= date('now', '-7 days') GROUP BY ticker ORDER BY total_pnl DESC LIMIT 15"
+                "SELECT ticker, SUM(pnl), COUNT(*) FROM trades WHERE pnl IS NOT NULL AND fecha >= date('now','-7 days') GROUP BY ticker ORDER BY 2 DESC LIMIT 15"
             )
             rows = cursor.fetchall()
-
             if not rows:
-                self.send_reply(chat_id, "📭 No hay operaciones cerradas en los últimos 7 días.")
+                self.send_reply(chat_id, "📭 No hay trades cerrados en 7 días.")
                 return
-
-            response = "💰 <b>PnL Acumulado — Últimos 7 Días</b>\n\n"
+            response = "💰 <b>PnL 7 Días</b>\n\n"
             total = 0.0
-            for ticker, pnl, trades in rows:
+            for t, pnl, cnt in rows:
                 emoji = "📈" if pnl >= 0 else "📉"
-                response += f"{emoji} <b>{ticker}</b>: <code>${pnl:+,.2f}</code> ({trades} trades)\n"
+                response += f"{emoji} <b>{t}</b>: <code>${pnl:+,.2f}</code> ({cnt} trades)\n"
                 total += pnl
-
-            emoji_total = "🟢" if total >= 0 else "🔴"
-            response += f"\n{emoji_total} <b>Total:</b> <code>${total:+,.2f}</code>"
+            response += f"\n{'🟢' if total>=0 else '🔴'} <b>Total:</b> <code>${total:+,.2f}</code>"
             self.send_reply(chat_id, response)
         except Exception as e:
             logging.error(f"Error en /pnl: {e}")
             self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def _cmd_alerta(self, chat_id, args, direction):
-        """Crea una alerta de precio (ABOVE o BELOW)."""
         try:
             if len(args) < 2:
                 ejemplo = "/alerta AAPL 200" if direction == "ABOVE" else "/alerta_bajo AAPL 180"
                 self.send_reply(chat_id, f"⚠️ Uso: <code>{ejemplo}</code>")
                 return
-
             ticker = args[0].upper().strip()
             try:
                 target = float(args[1])
             except ValueError:
                 self.send_reply(chat_id, "⚠️ El precio debe ser un número.")
                 return
-
             if target <= 0:
-                self.send_reply(chat_id, "⚠️ El precio debe ser positivo.")
+                self.send_reply(chat_id, "⚠️ Precio positivo.")
                 return
-
-            alert_id = save_price_alert(ticker, target, direction)
-            if alert_id > 0:
-                direccion_txt = "supere" if direction == "ABOVE" else "caiga debajo de"
-                self.send_reply(
-                    chat_id,
-                    f"✅ <b>Alerta #{alert_id} creada:</b> {ticker} cuando {direccion_txt} <code>${target:,.2f}</code>"
-                )
-                logging.info(f"📝 [Telegram] Alerta #{alert_id}: {ticker} {direction} ${target}")
+            aid = save_price_alert(ticker, target, direction)
+            if aid > 0:
+                txt = "supere" if direction == "ABOVE" else "caiga debajo de"
+                self.send_reply(chat_id, f"✅ <b>Alerta #{aid}:</b> {ticker} cuando {txt} <code>${target:,.2f}</code>")
             else:
-                self.send_reply(chat_id, "❌ No se pudo crear la alerta.")
+                self.send_reply(chat_id, "❌ No se pudo crear.")
         except Exception as e:
             logging.error(f"Error en /alerta: {e}")
             self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def _cmd_alertas(self, chat_id):
-        """Lista todas las alertas activas."""
         try:
             alerts = get_price_alerts(active_only=True)
             if not alerts:
-                self.send_reply(chat_id, "📭 No hay alertas activas.\nCrea una con <code>/alerta AAPL 200</code>")
+                self.send_reply(chat_id, "📭 Sin alertas.\nUsa <code>/alerta AAPL 200</code>")
                 return
-
-            response = "⏰ <b>Alertas de Precio Activas</b>\n\n"
+            response = "⏰ <b>Alertas Activas</b>\n\n"
             for a in alerts:
-                direccion = "supere" if a['direction'] == 'ABOVE' else "caiga debajo de"
-                response += (
-                    f"🔔 <b>#{a['id']}</b> — {a['ticker']} cuando {direccion} <code>${a['target_price']:,.2f}</code>\n"
-                    f"    <i>Creada: {a['created_at']}</i>\n\n"
-                )
+                d = "supere" if a['direction'] == 'ABOVE' else "caiga debajo de"
+                response += f"🔔 <b>#{a['id']}</b> — {a['ticker']} cuando {d} <code>${a['target_price']:,.2f}</code>\n"
             self.send_reply(chat_id, response)
         except Exception as e:
             logging.error(f"Error en /alertas: {e}")
             self.send_reply(chat_id, f"❌ Error: {str(e)}")
 
     def _cmd_borrar_alerta(self, chat_id, args):
-        """Elimina una alerta por ID."""
         try:
             if not args:
-                self.send_reply(chat_id, "⚠️ Uso: <code>/borrar_alerta 3</code> (el número es el ID de la alerta)")
+                self.send_reply(chat_id, "⚠️ Uso: <code>/borrar_alerta 3</code>")
                 return
-
             try:
-                alert_id = int(args[0])
+                aid = int(args[0])
             except ValueError:
-                self.send_reply(chat_id, "⚠️ El ID debe ser un número. Usa <code>/alertas</code> para ver los IDs.")
+                self.send_reply(chat_id, "⚠️ ID numérico. Usa <code>/alertas</code>.")
                 return
-
-            if delete_price_alert(alert_id):
-                self.send_reply(chat_id, f"🗑️ <b>Alerta #{alert_id} eliminada.</b>")
-                logging.info(f"📝 [Telegram] Alerta #{alert_id} desactivada.")
+            if delete_price_alert(aid):
+                self.send_reply(chat_id, f"🗑️ <b>Alerta #{aid} eliminada.</b>")
             else:
-                self.send_reply(chat_id, f"⚠️ No se encontró la alerta #{alert_id}.")
+                self.send_reply(chat_id, f"⚠️ No se encontró #{aid}.")
         except Exception as e:
             logging.error(f"Error en /borrar_alerta: {e}")
             self.send_reply(chat_id, f"❌ Error: {str(e)}")
+
+    # ═══════════════════════════════════════════════════════════════
+    # Nivel 3 — Gráfico rápido
+    # ═══════════════════════════════════════════════════════════════
+
+    def _cmd_chart(self, chat_id, args):
+        """Genera y envía un gráfico de velas con EMAs + volumen."""
+        try:
+            ticker = args[0].upper().strip() if args else "SPY"
+            self.send_reply(chat_id, f"📊 Generando gráfico para <b>{ticker}</b>...")
+
+            from core.data_fetcher import get_stock_data
+            from core.strategy import apply_strategy, get_spy_sentiment
+
+            spy_sent = get_spy_sentiment()
+            df = get_stock_data(ticker, period="5d", interval="15m")
+            if df.empty or len(df) < 14:
+                self.send_reply(chat_id, f"⚠️ Datos insuficientes para <b>{ticker}</b>.")
+                return
+
+            df_a = apply_strategy(df, spy_sentiment=spy_sent, ticker_symbol=ticker)
+            # Usar últimos 100 puntos para que el gráfico sea legible
+            plot_data = df_a.tail(100)
+
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            import matplotlib.dates as mdates
+            from io import BytesIO
+
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+            fig.patch.set_facecolor('#1a1a2e')
+            ax1.set_facecolor('#1a1a2e')
+            ax2.set_facecolor('#1a1a2e')
+
+            # Panel superior — Velas + EMAs
+            colors = ['#00ff88' if plot_data['Close'].iloc[i] >= plot_data['Open'].iloc[i] else '#ff4466' for i in range(len(plot_data))]
+            ax1.bar(plot_data.index, plot_data['High'] - plot_data['Low'], bottom=plot_data['Low'], width=0.0003, color=colors, linewidth=0)
+            ax1.bar(plot_data.index, abs(plot_data['Close'] - plot_data['Open']), bottom=plot_data[['Open','Close']].min(axis=1), width=0.0005, color=colors, linewidth=0)
+
+            if 'EMA_20' in plot_data.columns:
+                ax1.plot(plot_data.index, plot_data['EMA_20'], color='#ffaa00', linewidth=1, label='EMA 20')
+            if 'EMA_50' in plot_data.columns:
+                ax1.plot(plot_data.index, plot_data['EMA_50'], color='#ff66aa', linewidth=1, label='EMA 50')
+            if 'EMA_200' in plot_data.columns:
+                ax1.plot(plot_data.index, plot_data['EMA_200'], color='#66aaff', linewidth=1, label='EMA 200')
+
+            ax1.set_title(f'{ticker} — {plot_data.index[0].strftime("%m/%d")} a {plot_data.index[-1].strftime("%m/%d %H:%M")}', color='white', fontsize=12)
+            ax1.legend(loc='upper left', fontsize=7, facecolor='#1a1a2e', edgecolor='#333', labelcolor='white')
+            ax1.tick_params(colors='#888')
+            ax1.grid(alpha=0.15, color='white')
+
+            # Panel inferior — Volumen
+            vol_colors = ['#00ff88' if plot_data['Close'].iloc[i] >= plot_data['Open'].iloc[i] else '#ff4466' for i in range(len(plot_data))]
+            ax2.bar(plot_data.index, plot_data['Volume'], color=vol_colors, width=0.0005, alpha=0.5)
+            ax2.set_ylabel('Vol', color='#888', fontsize=8)
+            ax2.tick_params(colors='#888')
+            ax2.grid(alpha=0.15, color='white')
+
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d %H:%M'))
+            plt.xticks(rotation=45, ha='right', fontsize=7, color='#888')
+            plt.tight_layout()
+
+            # Guardar en memoria
+            buf = BytesIO()
+            plt.savefig(buf, format='png', dpi=120, facecolor='#1a1a2e', bbox_inches='tight')
+            buf.seek(0)
+            plt.close(fig)
+
+            # Enviar foto a Telegram
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
+            files = {'photo': (f'{ticker}_chart.png', buf, 'image/png')}
+            data = {'chat_id': chat_id}
+            resp = requests.post(url, data=data, files=files, timeout=15)
+            if resp.status_code != 200:
+                logging.error(f"Error enviando gráfico: {resp.text}")
+                self.send_reply(chat_id, "❌ Error al enviar el gráfico.")
+            buf.close()
+        except Exception as e:
+            logging.error(f"Error en /chart {args}: {e}")
+            self.send_reply(chat_id, f"❌ Error generando gráfico: {str(e)}")
 
     def send_reply(self, chat_id, text):
         """Envía una respuesta de vuelta al chat en formato HTML."""

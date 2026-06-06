@@ -13,4 +13,5 @@ uvicorn
 pytz
 python-dotenv
 pytest
+matplotlib>=3.7.0
 websockets

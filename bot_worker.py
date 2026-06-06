@@ -135,11 +135,15 @@ def main():
                         # Solo monitorear si NO tiene bracket (no podemos saberlo con certeza,
                         # así que registramos todas las posiciones abiertas para protección)
                         if sym not in software_monitored:
+                            side = 'buy' if p['side'] == 'long' else 'sell'
+                            # SL/TP inicializados a valores extremos para que NUNCA
+                            # se disparen en el primer ciclo. Se recalcularán
+                            # cuando el ciclo reciba datos frescos del ticker.
                             software_monitored[sym] = {
-                                'side': 'buy' if p['side'] == 'long' else 'sell',
+                                'side': side,
                                 'entry_price': p['avg_entry_price'],
-                                'sl_price': 0.0,   # Se recalculará en el siguiente ciclo
-                                'tp_price': 0.0,
+                                'sl_price': -1e9 if side == 'buy' else 1e9,
+                                'tp_price': 1e9 if side == 'buy' else -1e9,
                                 'time': time.time()
                             }
                             logging.info(f"🔁 Reconstruido monitoreo para posición huérfana: {sym}")
